@@ -4,4 +4,8 @@ class Configen::View < OpenStruct
 
     super
   end
+
+  def respond_to_missing?(name, include_private = false)
+    to_h.key?(name) || super
+  end
 end

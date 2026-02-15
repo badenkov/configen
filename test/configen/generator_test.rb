@@ -13,32 +13,32 @@ class Configen::GeneratorTest < Minitest::Test
         "result/liquid.cfg" => file_fixture("templates/template.cfg.liquid").to_s,
         "result_dir" => file_fixture("templates/template_dir").to_s,
         "result1/config1" => file_fixture("templates/template1.cfg.erb").to_s,
-        "result2/config2" => file_fixture("templates/template2.cfg.erb").to_s,
+        "result2/config2" => file_fixture("templates/template2.cfg.erb").to_s
       }
 
-      @generator.before pattern: 'result/*' do
-        @changes << 'result will be changed'
+      @generator.before pattern: "result/*" do
+        @changes << "result will be changed"
       end
-      @generator.before pattern: 'result1/*' do
-        @changes << 'result1 will be changed'
+      @generator.before pattern: "result1/*" do
+        @changes << "result1 will be changed"
       end
-      @generator.before pattern: 'result2/*' do
-        @changes << 'result2 will be changed'
+      @generator.before pattern: "result2/*" do
+        @changes << "result2 will be changed"
       end
-      @generator.after pattern: 'result/*' do
-        @changes << 'result changed'
+      @generator.after pattern: "result/*" do
+        @changes << "result changed"
       end
-      @generator.after pattern: 'result1/*' do
-        @changes << 'result1 changed'
+      @generator.after pattern: "result1/*" do
+        @changes << "result1 changed"
       end
-      @generator.after pattern: 'result2/*' do
-        @changes << 'result2 changed'
+      @generator.after pattern: "result2/*" do
+        @changes << "result2 changed"
       end
 
       @variables = {
         "greeting" => "Hello, world!",
         "var1" => "Var 1",
-        "var2" => "Var 2",
+        "var2" => "Var 2"
       }
 
       @changes = []
@@ -51,9 +51,9 @@ class Configen::GeneratorTest < Minitest::Test
 
     expected_path = File.join(@output_dir, "result", "example.cfg")
     expected_content = <<~EOC
-    Template example
+      Template example
 
-    Hello, world!
+      Hello, world!
     EOC
     content = File.read(File.join(@output_dir, "result", "example.cfg"))
 
@@ -62,25 +62,26 @@ class Configen::GeneratorTest < Minitest::Test
 
     assert @output_dir.join("result_dir", "file1.txt").exist?
     assert_equal(<<~EOF, File.read(File.join(@output_dir, "result_dir", "file1.txt")))
-    File1
+      File1
 
-    <%= greeting %>
+      <%= greeting %>
     EOF
 
-    assert @output_dir.join("result_dir", "template1.txt").exist?, "Template should be rendered with filename without erb extension"
+    assert @output_dir.join("result_dir", "template1.txt").exist?,
+           "Template should be rendered with filename without erb extension"
   end
 
   def test_render_with_errors
     templates = {
-      'result_with_error.txt' => file_fixture('templates/template_with_error.cfg.erb').to_s,
-      'result_with_error1.txt' => file_fixture('templates/template_with_error1.cfg.erb').to_s,
-      'result.txt' => file_fixture('templates/template.cfg.erb').to_s,
+      "result_with_error.txt" => file_fixture("templates/template_with_error.cfg.erb").to_s,
+      "result_with_error1.txt" => file_fixture("templates/template_with_error1.cfg.erb").to_s,
+      "result.txt" => file_fixture("templates/template.cfg.erb").to_s
     }
     variables = {
       "greeting" => "Hello, world",
-      "settings" => {},
+      "settings" => {}
     }
-    
+
     @generator.render(templates, variables)
 
     refute @output_dir.join("result_with_error.txt").exist?
@@ -92,7 +93,7 @@ class Configen::GeneratorTest < Minitest::Test
       "result_with_error.txt" => ["Undefined variable `greetings` in template. Did you mean `greeting`?"],
       "result_with_error1.txt" => ["undefined method '[]' for nil"]
     }
-    assert expected_errors, @generator.errors 
+    assert expected_errors, @generator.errors
   end
 
   def test_before_callback
@@ -125,7 +126,7 @@ class Configen::GeneratorTest < Minitest::Test
     @generator.render(@templates, @variables)
 
     assert_equal 2, @changes.count
-    assert_includes @changes.shift, 'result1 will be changed'
-    assert_includes @changes.shift, 'result1 changed'
+    assert_includes @changes.shift, "result1 will be changed"
+    assert_includes @changes.shift, "result1 changed"
   end
 end

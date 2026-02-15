@@ -21,21 +21,19 @@ class Configen::Environment
     hooks["after"]&.each do |hook|
       # puts "Add #{hook["script"]}"
       @generator.after pattern: hook["pattern"] do
-        stdout_str, stderr_str, status = Open3.capture3("bash", "-c", hook["script"]) if hook["script"]
+        Open3.capture3("bash", "-c", hook["script"]) if hook["script"]
 
         # puts "status #{status}: #{hook["script"]}"
       end
     end
-    
+
     @templates = config.templates
 
-    @theme = File.exist?(File.join(@config.state_path, "theme")) && File.read(File.join(@config.state_path, "theme"));
+    @theme = File.exist?(File.join(@config.state_path, "theme")) && File.read(File.join(@config.state_path, "theme"))
     @theme ||= "default"
   end
 
-  def templates
-    return @templates
-  end
+  attr_reader :templates
 
   def themes
     # return [] if @config.themes_path.nil?
@@ -55,7 +53,7 @@ class Configen::Environment
   end
 
   def theme
-    theme = Configen::Variables.load_from File.join(@config.themes_path, @theme)
+    Configen::Variables.load_from File.join(@config.themes_path, @theme)
     @theme
   end
 
@@ -69,7 +67,7 @@ class Configen::Environment
   def apply
     theme = Configen::Variables.load_from File.join(@config.themes_path, @theme)
 
-    if result = @generator.render(@templates, theme.settings)
+    if (result = @generator.render(@templates, theme.settings))
       File.write(File.join(@config.state_path, "theme"), @theme)
     end
 
@@ -81,11 +79,8 @@ class Configen::Environment
   end
 
   def variables
-    theme = Configen::Variables.load_from File.join(@config.themes_path, @theme)
+    Configen::Variables.load_from File.join(@config.themes_path, @theme)
   end
-
-  private
-
 
   # def theme(_name)
   #   theme_path = themes_path.join("name")

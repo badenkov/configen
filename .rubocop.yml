@@ -1,11 +1,65 @@
 AllCops:
   TargetRubyVersion: 3.1
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - "bin/*"
+    - "vendor/**/*"
+    - ".devstate/**/*"
+    - "gemset.nix"
 
+# Prefer double quotes
 Style/StringLiterals:
   EnforcedStyle: double_quotes
 
 Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
 
+# Allow compact style: Configen::CLI instead of nested modules
+Style/ClassAndModuleChildren:
+  Enabled: false
+
+# Allow frozen_string_literal comment to be missing
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+# Documentation not required for small project
+Style/Documentation:
+  Enabled: false
+
+# Metrics - disabled, not useful for this project
+Metrics/MethodLength:
+  Enabled: false
+
+Metrics/AbcSize:
+  Enabled: false
+
+Metrics/CyclomaticComplexity:
+  Enabled: false
+
+Metrics/PerceivedComplexity:
+  Enabled: false
+
+Metrics/BlockLength:
+  Exclude:
+    - "test/**/*"
+    - "*.gemspec"
+
+Metrics/ClassLength:
+  Max: 250
+
+# Allow OpenStruct for MVP
+Style/OpenStructUse:
+  Enabled: false
+
+# Heredoc naming not critical
+Naming/HeredocDelimiterNaming:
+  Enabled: false
+
+# render returns boolean, not a predicate
+Naming/PredicateMethod:
+  Enabled: false
+
+# Keep warnings for unused assignments
 Lint/UselessAssignment:
   Severity: warning

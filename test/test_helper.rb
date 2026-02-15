@@ -3,7 +3,7 @@
 require "configen"
 
 require "minitest/autorun"
-require 'minitest/hooks/default'
+require "minitest/hooks/default"
 require "minitest/focus"
 
 module Configen::TestHelpers
@@ -22,4 +22,3 @@ class Minitest::Test
   include Minitest::Hooks
   include Configen::TestHelpers
 end
-

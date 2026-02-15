@@ -38,7 +38,6 @@ class Configen::CLI < Thor
     end
   end
 
-
   desc "apply", "Apply configs"
   def apply
     build_env do |env|
@@ -46,7 +45,7 @@ class Configen::CLI < Thor
         say "Success! Theme #{env.theme}", :green
       else
         env.errors.each do |k, v|
-          say k, [:red, :bold]
+          say k, %i[red bold]
           v.each do |msg|
             say "  #{msg}", :red
           end
@@ -63,7 +62,7 @@ class Configen::CLI < Thor
   end
 
   desc "theme", "Theme"
-  def theme(name=nil)
+  def theme(name = nil)
     build_env do |env|
       if name.nil?
         puts env.theme
@@ -73,7 +72,7 @@ class Configen::CLI < Thor
           say "Set theme #{name}", :green
         else
           env.errors.each do |k, v|
-            say k, [:red, :bold]
+            say k, %i[red bold]
             v.each do |msg|
               say "  #{msg}", :red
             end
@@ -85,29 +84,29 @@ class Configen::CLI < Thor
 
   desc "vars", "Show variables"
   def vars
-    build_env do |env, conf|
-      require "prettyprint"
+    build_env do |env, _conf|
+      require "pp"
       pp env.variables.settings
-      binding.irb
     end
   end
-  
+
   desc "watch", "Watch"
   def watch
     if options["config"]
       raise Thor::Error, "File #{options["config"]} doesn't exist" unless File.exist?(options["config"])
+
       @config ||= Configen::Config.new(config: options["config"])
     elsif options["flake"]
       @config ||= Configen::Config.new(flake: options["flake"])
     end
 
-    @config.watch do |config|
+    @config.watch do |_config|
       env ||= Configen::Environment.new(@config)
       if env.apply
         say "Success! Theme #{env.theme}", :green
       else
         env.errors.each do |k, v|
-          say k, [:red, :bold]
+          say k, %i[red bold]
           v.each do |msg|
             say "  #{msg}", :red
           end
@@ -121,22 +120,19 @@ class Configen::CLI < Thor
   end
 
   no_commands do
-    def build_env(&block)
-      Dir.mktmpdir do |dir| 
-        if options["config"] && options["flake"]
-         raise Thor::Error, "Only either --config either --flake should be!"
-        end
+    def build_env
+      Dir.mktmpdir do |_dir|
+        raise Thor::Error, "Only either --config either --flake should be!" if options["config"] && options["flake"]
 
         if options["config"]
           raise Thor::Error, "File #{options["config"]} doesn't exist" unless File.exist?(options["config"])
+
           @config ||= Configen::Config.new(config: options["config"])
         elsif options["flake"]
           @config ||= Configen::Config.new(flake: options["flake"])
         else
           @config ||= Configen::Config.new
         end
-
-        
 
         @environment ||= Configen::Environment.new(@config)
 

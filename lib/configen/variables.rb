@@ -9,11 +9,11 @@ class Configen::Variables
     return unless root.join("config.toml").exist?
 
     content = root.join("config.toml").read
-    settings = unless content.nil? then
-      Tomlib.load(content) 
-    else
-      {}
-    end
+    settings = if content.nil?
+                 {}
+               else
+                 Tomlib.load(content)
+               end
 
     assets_path = root.join("assets")
     assets = assets_path.glob("**/*").select(&:file?).each_with_object({}) do |path, result|
@@ -29,7 +29,7 @@ class Configen::Variables
 
     new(settings:, assets:, templates:)
   rescue Tomlib::ParseError => e
-    puts "ParseError: #{root.join("settings.toml").to_s} on #{e.message}"
+    puts "ParseError: #{root.join("settings.toml")} on #{e.message}"
   end
 
   def initialize(settings:, assets:, templates:)
@@ -70,7 +70,7 @@ end
 #       File.read(path)
 #     end.then do |content|
 #       {} if content.nil?
-#       Tomlib.load(content) 
+#       Tomlib.load(content)
 #     end
 #   rescue Tomlib::ParseError => e
 #     puts "ParseError: #{files["settings.toml"]} on #{e.message}"

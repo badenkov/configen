@@ -14,13 +14,13 @@ class Configen::VariablesTest < Minitest::Test
     )
     @theme = Configen::Variables.new(
       files: {
-        "file2" => "/home/dotfiles/theme/file1",
+        "file2" => "/home/dotfiles/theme/file1"
       },
       settings: {
         colors: {
           red: "red"
-        },
-      },
+        }
+      }
     )
   end
 
@@ -35,7 +35,7 @@ class Configen::VariablesTest < Minitest::Test
   end
 
   def test_fff
-    vars = Configen::Variables.load_variables file_fixture('variables').to_s
+    vars = Configen::Variables.load_variables file_fixture("variables").to_s
     vars.s
 
     # binding.irb

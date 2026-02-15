@@ -4,6 +4,8 @@ PATH
     configen (0.1.0)
       liquid (~> 5.8.7)
       listen (~> 3.9.0)
+      logger
+      ostruct
       thor (~> 1.4)
       tomlib (~> 0.7.3)
 
@@ -31,6 +33,7 @@ GEM
     listen (3.9.0)
       rb-fsevent (~> 0.10, >= 0.10.3)
       rb-inotify (~> 0.9, >= 0.9.10)
+    logger (1.7.0)
     minitest (5.25.5)
     minitest-autotest (1.1.1)
       minitest-server (~> 1.0)
@@ -42,6 +45,7 @@ GEM
     minitest-server (1.0.8)
       drb (~> 2.0)
       minitest (~> 5.16)
+    ostruct (0.6.3)
     parallel (1.27.0)
     parser (3.3.9.0)
       ast (~> 2.4.1)

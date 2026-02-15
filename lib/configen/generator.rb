@@ -36,18 +36,18 @@ class Configen::Generator
     @previous = {}
     # @output_path.directory?
     if File.directory?(@output_path)
-      @previous = @output_path.glob("**/*").select(&:file?).map do |path|
+      @previous = @output_path.glob("**/*").select(&:file?).to_h do |path|
         rel = path.relative_path_from(@output_path).to_s
         sha256 = path
                  .then { File.read(_1) }
                  .then { Digest::SHA256.hexdigest(_1) }
 
         [rel, sha256]
-      end.to_h
+      end
     end
 
     ## Prepare templates
-    prepared_templates = templates.inject({}) do |res, item|
+    prepared_templates = templates.each_with_object({}) do |item, res|
       rel = item[0]
       path = Pathname.new(item[1])
       if path.directory?
@@ -58,8 +58,6 @@ class Configen::Generator
       else
         res[rel] = path.to_s
       end
-
-      res
     end
 
     ## Render
@@ -67,18 +65,17 @@ class Configen::Generator
     @content = {}
     prepared_templates.each do |rel, template|
       result = render_template(template, variables)
-      unless result[:content].nil?
+      if result[:content].nil?
+        @errors[rel] = result[:errors]
+      else
         @current[rel] = Digest::SHA256.hexdigest(result[:content])
         @content[rel] = result[:content]
-      else
-        @errors[rel] = result[:errors]
       end
     end
 
     @to_update = []
     @to_delete = []
     @to_create = []
-
 
     all_keys = @previous.keys | @current.keys
     all_keys.each do |k|
@@ -145,7 +142,7 @@ class Configen::Generator
       hook[:block]&.call if should_trigger
     end
 
-    return true
+    true
   end
 
   private
@@ -153,7 +150,7 @@ class Configen::Generator
   def render_template(path, variables = {})
     result = {
       errors: [],
-      content: nil,
+      content: nil
     }
 
     unless File.exist?(path)
@@ -174,7 +171,7 @@ class Configen::Generator
   def render_erb(path, variables)
     result = {
       errors: [],
-      content: nil,
+      content: nil
     }
 
     content = File.read(path)
@@ -184,13 +181,13 @@ class Configen::Generator
     result
   rescue StandardError => e
     result[:errors] << e.message
-    return result
-  rescue SyntaxError => e
+    result
+  rescue SyntaxError
     result[:errors] << "Syntax error"
-    return result
+    result
   end
 
-  def render_liquid(path, variables)
+  def render_liquid(path, _variables)
     File.read(path)
     # content = File.read(path)
     # template = Liquid::Template.parse(content)

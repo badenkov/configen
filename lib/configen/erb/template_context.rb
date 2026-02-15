@@ -12,9 +12,9 @@ class Configen::ERB::TemplateContext
     # end
   end
 
-  def method_missing(name, *args, &block)
+  def method_missing(name, ...)
     if @vars_obj.respond_to?(name)
-      @vars_obj.public_send(name, *args, &block)
+      @vars_obj.public_send(name, ...)
     else
       available = if @vars_obj.respond_to?(:keys)
                     @vars_obj.keys.map(&:to_s)
@@ -38,8 +38,7 @@ class Configen::ERB::TemplateContext
 
   private
 
-    def sugest(name)
-      DidYouMean::SpellChecker.new(dictionary: @vars_obj.keys.map(&:to_s)).correct(name.to_s)
-    end
+  def sugest(name)
+    DidYouMean::SpellChecker.new(dictionary: @vars_obj.keys.map(&:to_s)).correct(name.to_s)
+  end
 end
-

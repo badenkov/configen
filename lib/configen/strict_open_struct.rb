@@ -6,12 +6,10 @@ class Configen::StrictOpenStruct
     end
   end
 
-  def method_missing(name, *args, &block)
-    if @table.key?(name)
-      @table[name]
-    else
-      raise NoMethodError, "Нет такого ключа: #{name}"
-    end
+  def method_missing(name, *_args)
+    raise NoMethodError, "Нет такого ключа: #{name}" unless @table.key?(name)
+
+    @table[name]
   end
 
   def respond_to_missing?(name, include_private = false)
@@ -22,4 +20,3 @@ class Configen::StrictOpenStruct
     @table.keys
   end
 end
-
