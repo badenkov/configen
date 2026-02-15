@@ -28,6 +28,7 @@
         packages = [
           ruby
           bundler
+          pkgs.bundix
           pkgs.libyaml
         ];
 

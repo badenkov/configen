@@ -20,7 +20,7 @@
     version = "3.2.2";
   };
   configen = {
-    dependencies = ["liquid" "listen" "thor" "tomlib" "zeitwerk"];
+    dependencies = ["liquid" "listen" "logger" "ostruct" "thor" "tomlib"];
     groups = ["default"];
     platforms = [];
     source = {
@@ -142,6 +142,16 @@
     };
     version = "3.9.0";
   };
+  logger = {
+    groups = ["default"];
+    platforms = [];
+    source = {
+      remotes = ["https://rubygems.org"];
+      sha256 = "00q2zznygpbls8asz5knjvvj2brr3ghmqxgr83xnrdj4rk3xwvhr";
+      type = "gem";
+    };
+    version = "1.7.0";
+  };
   minitest = {
     groups = ["default"];
     platforms = [];
@@ -195,6 +205,16 @@
       type = "gem";
     };
     version = "1.0.8";
+  };
+  ostruct = {
+    groups = ["default"];
+    platforms = [];
+    source = {
+      remotes = ["https://rubygems.org"];
+      sha256 = "04nrir9wdpc4izqwqbysxyly8y7hsfr4fsv69rw91lfi9d5fv8lm";
+      type = "gem";
+    };
+    version = "0.6.3";
   };
   parallel = {
     groups = ["default"];
@@ -445,15 +465,5 @@
       type = "gem";
     };
     version = "4.0.4";
-  };
-  zeitwerk = {
-    groups = ["default"];
-    platforms = [];
-    source = {
-      remotes = ["https://rubygems.org"];
-      sha256 = "119ypabas886gd0n9kiid3q41w76gz60s8qmiak6pljpkd56ps5j";
-      type = "gem";
-    };
-    version = "2.7.3";
   };
 }

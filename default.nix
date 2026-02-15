@@ -25,6 +25,6 @@ in
       cp -r . $out/share/configen
       chmod +x $out/share/configen/bin/configen
 
-      makeWrapper $out/share/configen/bin/configen $out/bin/configen
+      makeWrapper $out/share/configen/exe/configen $out/bin/configen
     '';
   }
