@@ -1,0 +1,14 @@
+/.direnv
+/.devstate
+
+# pre-commit
+.pre-commit-config.yaml
+
+/.bundle/
+/.yardoc
+/_yardoc/
+/coverage/
+/doc/
+/pkg/
+/spec/reports/
+/tmp/

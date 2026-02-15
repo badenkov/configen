@@ -1,0 +1,109 @@
+@import "/home/badenkov/.config/waybar/colors.css";
+
+* {
+  color: @text;
+
+  font-family:   Ubuntu;
+  font-size:     14px;
+
+  border:        none;
+  border-radius: 0;
+
+  box-shadow:    none;
+  text-shadow:   none;
+  transition-duration: 0s;
+}
+
+window#waybar {
+  background: @crust;
+}
+
+#workspaces {
+  margin: 0px 0px 0px 10px;
+  padding: 0 10px;
+}
+
+#workspaces button {
+  margin: 0 2px;
+  padding: 0px 10px;
+  min-width: 0;
+
+  background: transparent;
+}
+
+#workspaces button:hover {
+	color: @overlay2;
+}
+
+#workspaces button.visible {
+  font-weight: bold;
+  color: @base;
+
+  background: transparent;
+}
+
+#workspaces button.urgent {
+  color: @red;
+}
+
+#window {
+  margin: 0px 0px 0px 0px;
+  padding: 5px 10px;
+
+	color: @text;
+}
+
+#pulseaudio {
+  margin: 0px 0px 0px 0px;
+  padding: 5px 5px 5px 15px;
+
+  color: @text;
+
+  border: 0px solid @surface0;
+  border-radius: 15px 0 0 15px;
+}
+
+#battery {
+  margin: 0px 0px 0px 0px;
+  padding: 5px 10px;
+
+  color: @text;
+  background: transparent;
+}
+
+#battery.warning {
+  color: @yellow;
+}
+
+#battery.critical {
+  color: @red;
+}
+
+#battery.charging {
+  color: @text; 
+}
+
+#clock {
+  margin: 0px 0px 0px 0px;
+  padding: 5px 5px;
+
+  color: @text;
+}
+
+#language {
+  margin: 0px 0px 0px 0px;
+  padding: 0 5px;
+
+  color: @text;
+}
+
+#tray {
+  margin: 0px 0px 0px 0px;
+  padding: 0 15px 0 10px;
+
+  color: @text;
+
+  border: 0px solid @surface0;
+  border-radius: 0 15px 15px 0;
+}
+

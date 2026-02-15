@@ -1,0 +1,8 @@
+themes:
+  
+configs:
+  - template: 
+      src: niri/config.kdl
+      dst: $XDG_CONFIG_HOME/niri.kdl
+  - copy:
+      

@@ -1,0 +1,7 @@
+config {
+  var "<%= base01 %>";
+}
+
+<% if current_theme %>
+
+<% end %>

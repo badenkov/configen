@@ -1,0 +1,17 @@
+profile avlabari {
+  output "Dell Inc. DELL P2723QE DJ4F9V3" enable mode 3840x2160@59.997Hz position 0,0 scale 2.000000
+  output "Tianma Microelectronics Ltd. TL140ADXP24-0 Unknown" enable mode 2880x1800@120.0Hz position 1920,180 scale 2.000000
+  exec systemctl --user restart waybar
+}
+
+profile isani {
+  output "Lenovo Group Limited LEN S24e-10 0x31363838" enable mode 1920x1080@60.000Hz position 0,0 scale 1.000000
+  output "Tianma Microelectronics Ltd. TL140ADXP24-0 Unknown" enable mode 2880x1800@120.0Hz position 1920,400 scale 2.000000
+  exec systemctl --user restart waybar
+}
+
+profile undocked {
+  output "eDP-1" enable mode 2880x1800@120.0Hz scale 2.000000
+  exec systemctl --user restart waybar
+}
+
