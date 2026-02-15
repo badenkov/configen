@@ -46,7 +46,6 @@ class Configen::GeneratorTest < Minitest::Test
     end
   end
 
-  focus
   def test_render
     @generator.render(@templates, @variables)
 
@@ -70,7 +69,8 @@ class Configen::GeneratorTest < Minitest::Test
 
     assert @output_dir.join("result_dir", "template1.txt").exist?, "Template should be rendered with filename without erb extension"
   end
-  
+
+  def test_render_with_errors
     templates = {
       'result_with_error.txt' => file_fixture('templates/template_with_error.cfg.erb').to_s,
       'result_with_error1.txt' => file_fixture('templates/template_with_error1.cfg.erb').to_s,
