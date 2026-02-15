@@ -16,7 +16,11 @@ class Configen::ERB::TemplateContext
     if @vars_obj.respond_to?(name)
       @vars_obj.public_send(name, *args, &block)
     else
-      available = @vars_obj.methods(false).map(&:to_s)
+      available = if @vars_obj.respond_to?(:keys)
+                    @vars_obj.keys.map(&:to_s)
+                  else
+                    @vars_obj.methods(false).map(&:to_s)
+                  end
 
       spell_checker = DidYouMean::SpellChecker.new(dictionary: available)
       suggestions = spell_checker.correct(name.to_s)
@@ -26,7 +30,6 @@ class Configen::ERB::TemplateContext
 
       raise NameError, msg
     end
-
   end
 
   def respond_to_missing?(name, include_all = false)

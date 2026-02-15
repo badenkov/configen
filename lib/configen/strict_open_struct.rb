@@ -17,5 +17,9 @@ class Configen::StrictOpenStruct
   def respond_to_missing?(name, include_private = false)
     @table.key?(name) || super
   end
+
+  def keys
+    @table.keys
+  end
 end
 
