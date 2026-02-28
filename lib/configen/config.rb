@@ -182,12 +182,7 @@ class Configen::Config
   end
 
   def theme_state_file
-    digest = Digest::SHA256.hexdigest(theme_scope_key)
-    Pathname.new(state_path).join("themes", "#{digest}.theme")
-  end
-
-  def theme_scope_key
-    @config_path ? @config_path.to_s : Dir.pwd
+    Pathname.new(state_path).join("theme")
   end
 
   def normalize_theme_name(name)

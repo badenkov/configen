@@ -60,7 +60,7 @@ Theme rules:
 
 - `themes_dir` is resolved relative to `configen.yaml`.
 - active theme is selected dynamically (`configen theme <name>`) and stored in state.
-- theme state is stored under XDG state path and scoped per config path.
+- theme state is stored globally under XDG state path for the user.
 - optional `theme` in config may be fallback default.
 - one directory = one theme (keep light/dark as separate theme names).
 - Theme files contain only variables/overrides.

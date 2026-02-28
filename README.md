@@ -68,7 +68,7 @@ Rules:
 - Theme is optional and overrides `variables`.
 - Active theme is resolved in order:
   - `--theme` option for current command;
-  - saved state file under `${XDG_STATE_HOME:-~/.local/state}/configen/themes/` (scoped per config path);
+  - saved state file `${XDG_STATE_HOME:-~/.local/state}/configen/theme`;
   - `theme` from `configen.yaml` (optional fallback).
 - Theme file path: `<themes_dir>/<theme>/theme.yaml` (relative to `configen.yaml`).
 - Theme file may be either plain variables mapping or `{ variables: ... }`.
