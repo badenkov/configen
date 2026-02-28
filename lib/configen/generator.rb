@@ -100,14 +100,25 @@ class Configen::Generator
       end
 
       if File.exist?(dst) || File.symlink?(dst)
-        if File.symlink?(dst) && !force
-          plan[:conflict] << rel
-          @errors["conflicts"] ||= []
-          @errors["conflicts"] << "#{rel}: target is a symlink (use --force to replace)"
-          next
-        end
+        if File.symlink?(dst)
+          if !force
+            plan[:conflict] << rel
+            @errors["conflicts"] ||= []
+            @errors["conflicts"] << "#{rel}: target is a symlink (use --force to replace)"
+            next
+          end
 
-        if File.file?(dst) || File.symlink?(dst)
+          if File.exist?(dst)
+            current = File.read(dst)
+            if current == content
+              plan[:unchanged] << rel
+            else
+              plan[:update] << rel
+            end
+          else
+            plan[:update] << rel
+          end
+        elsif File.file?(dst)
           current = File.read(dst)
           if current == content
             plan[:unchanged] << rel
