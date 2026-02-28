@@ -25,6 +25,9 @@ configen apply -c ~/dotfiles/configen.yaml
 # Dry run
 configen apply --dry-run
 
+# Diff includes hooks that would run for this change set
+configen diff
+
 # Theme management
 configen theme                  # show active and available themes
 configen theme tokyo-night      # persist active theme in state for this config
@@ -54,6 +57,19 @@ variables:
   font_size: 13
   palette:
     bg: "#000000"
+
+hooks:
+  before:
+    - name: "niri-transition"
+      run: "niri msg action do-screen-transition"
+      changed:
+        - ".config/niri/**"
+      if: "pgrep -x niri >/dev/null"
+  after:
+    - name: "reload-kitty"
+      run: "pkill -USR1 -x kitty"
+      changed:
+        - ".config/kitty/**"
 ```
 
 Rules:
@@ -72,6 +88,13 @@ Rules:
   - `theme` from `configen.yaml` (optional fallback).
 - Theme file path: `<themes_dir>/<theme>/theme.yaml` (relative to `configen.yaml`).
 - Theme file may be either plain variables mapping or `{ variables: ... }`.
+- Hooks are optional and support:
+  - `before` and `after` phases (list of hooks);
+  - `run` command (required);
+  - `changed` glob or list of globs to run only for matching changed files;
+  - `if` command as runtime condition (run only on exit code `0`).
+- Hook failures do not stop other hooks, but are reported as apply errors.
+- Hooks are not executed in `--dry-run`.
 
 Theme example (`themes/tokyo-night/theme.yaml`):
 

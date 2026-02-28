@@ -13,3 +13,4 @@
 /spec/reports/
 /tmp/
 /playground/home/
+/.rubocop_cache/

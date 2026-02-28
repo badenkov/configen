@@ -106,6 +106,27 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal 17, cfg2.variables.font_size
   end
 
+  def test_missing_theme_in_state_is_ignored
+    project = @root.join("dotfiles-missing-theme-in-state")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write("font_size: 14\n")
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates: {}
+      variables:
+        font_size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    state_file = Pathname.new(cfg.state_path).join("theme")
+    state_file.dirname.mkpath
+    state_file.write("missing-theme\n")
+
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "tokyo-night", cfg2.current_theme
+    assert_equal 14, cfg2.variables.font_size
+  end
+
   def test_theme_can_use_variables_root_key
     project = @root.join("dotfiles-theme-variables-root")
     project.join("configs").mkpath
@@ -141,6 +162,35 @@ class Configen::ConfigTest < Minitest::Test
     nvim = cfg.templates.fetch(".config/nvim")
 
     assert_equal project.join("configs", "nvim"), nvim.source
+  end
+
+  def test_loads_hooks_with_changed_and_if_condition
+    project = @root.join("dotfiles-hooks")
+    project.join("configs").mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      hooks:
+        before:
+          - name: "pre-transition"
+            run: "echo before"
+            changed:
+              - ".config/niri/**"
+            if: "pgrep -x niri >/dev/null"
+        after:
+          - "echo after"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+
+    assert_equal 1, cfg.hooks[:before].size
+    assert_equal "pre-transition", cfg.hooks[:before][0].name
+    assert_equal "echo before", cfg.hooks[:before][0].run
+    assert_equal [".config/niri/**"], cfg.hooks[:before][0].changed
+    assert_equal "pgrep -x niri >/dev/null", cfg.hooks[:before][0].if_command
+
+    assert_equal 1, cfg.hooks[:after].size
+    assert_equal "after[1]", cfg.hooks[:after][0].name
+    assert_equal "echo after", cfg.hooks[:after][0].run
   end
 
   def test_rejects_exact_option_in_template_spec
@@ -213,5 +263,22 @@ class Configen::ConfigTest < Minitest::Test
 
     cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
     assert_equal %w[gruvbox tokyo-night], cfg.available_themes
+  end
+
+  def test_rejects_invalid_hooks_shape
+    project = @root.join("dotfiles-invalid-hooks")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      hooks:
+        before:
+          run: "echo nope"
+    YAML
+
+    error = assert_raises RuntimeError do
+      Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    end
+
+    assert_match(/hooks\.before.*list/, error.message)
   end
 end

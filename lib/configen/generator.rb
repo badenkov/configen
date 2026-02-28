@@ -3,7 +3,7 @@
 require "find"
 
 class Configen::Generator
-  attr_reader :errors
+  attr_reader :errors, :last_plan
 
   def initialize(home_path:)
     @home_path = Pathname.new(home_path)
@@ -30,12 +30,16 @@ class Configen::Generator
 
   def apply(templates, variables = {}, dry_run: false, force: false)
     plan(templates, variables, force:)
+    apply_from_plan(dry_run:)
+  end
+
+  def apply_from_plan(dry_run: false)
     return false unless valid?
     return true if dry_run
 
     write_files!
     delete_files!
-    true
+    @errors.empty?
   end
 
   private
@@ -75,7 +79,7 @@ class Configen::Generator
 
   def build_plan(desired, managed_dir_roots, force:)
     plan = {
-      desired:,
+      desired: desired,
       create: [],
       update: [],
       delete: [],

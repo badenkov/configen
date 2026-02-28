@@ -6,12 +6,17 @@ class Configen::Config
     variables: {},
     themes_dir: "themes",
     theme: nil,
+    hooks: {
+      before: [],
+      after: []
+    },
     state_path: lambda { |env, home|
       Pathname.new(env["XDG_STATE_HOME"] || File.join(home, ".local", "state")).join("configen").to_s
     }
   }.freeze
 
   TemplateSpec = Struct.new(:source, keyword_init: true)
+  HookSpec = Struct.new(:name, :run, :changed, :if_command, keyword_init: true)
 
   attr_reader :settings, :config_path
 
@@ -25,6 +30,10 @@ class Configen::Config
 
   def templates
     @settings.templates
+  end
+
+  def hooks
+    @settings.hooks
   end
 
   def variables(theme: nil)
@@ -70,7 +79,13 @@ class Configen::Config
 
   def defaults
     DEFAULTS.transform_values do |v|
-      v.is_a?(Proc) ? v.call(@env, @home) : v
+      if v.is_a?(Proc)
+        v.call(@env, @home)
+      elsif v.is_a?(Hash)
+        Marshal.load(Marshal.dump(v))
+      else
+        v
+      end
     end
   end
 
@@ -98,8 +113,9 @@ class Configen::Config
     raise "`themes_dir` must be a string" unless themes_dir.is_a?(String)
 
     {
-      templates:,
+      templates: templates,
       variables: base_variables,
+      hooks: normalize_hooks(data["hooks"] || {}),
       themes_dir: themes_dir,
       theme: data["theme"]
     }
@@ -122,6 +138,59 @@ class Configen::Config
     end
   end
 
+  def normalize_hooks(raw_hooks)
+    raise "`hooks` must be a mapping" unless raw_hooks.is_a?(Hash)
+
+    {
+      before: normalize_hook_list(raw_hooks["before"] || raw_hooks[:before], phase: "before"),
+      after: normalize_hook_list(raw_hooks["after"] || raw_hooks[:after], phase: "after")
+    }
+  end
+
+  def normalize_hook_list(raw_list, phase:)
+    return [] if raw_list.nil?
+
+    raise "`hooks.#{phase}` must be a list" unless raw_list.is_a?(Array)
+
+    raw_list.each_with_index.map do |item, index|
+      normalize_hook_spec(item, phase: phase, index: index)
+    end
+  end
+
+  def normalize_hook_spec(raw_spec, phase:, index:)
+    case raw_spec
+    when String
+      HookSpec.new(name: "#{phase}[#{index + 1}]", run: raw_spec, changed: nil, if_command: nil)
+    when Hash
+      name = raw_spec["name"] || raw_spec[:name] || "#{phase}[#{index + 1}]"
+      run = raw_spec["run"] || raw_spec[:run]
+      raise "`hooks.#{phase}[#{index}].run` is required" if run.nil? || run.to_s.strip.empty?
+
+      changed = raw_spec["changed"] || raw_spec[:changed]
+      if_command = raw_spec["if"] || raw_spec[:if] || raw_spec["if_command"] || raw_spec[:if_command]
+
+      HookSpec.new(
+        name: name.to_s,
+        run: run.to_s,
+        changed: normalize_changed_globs(changed, phase: phase, index: index),
+        if_command: if_command&.to_s
+      )
+    else
+      raise "`hooks.#{phase}[#{index}]` must be a string or mapping"
+    end
+  end
+
+  def normalize_changed_globs(raw_changed, phase:, index:)
+    return nil if raw_changed.nil?
+
+    list = raw_changed.is_a?(Array) ? raw_changed : [raw_changed]
+    unless list.all? { |item| item.is_a?(String) && !item.strip.empty? }
+      raise "`hooks.#{phase}[#{index}].changed` must be a string or list of strings"
+    end
+
+    list
+  end
+
   def resolve_config_path(explicit_path)
     return Pathname.new(explicit_path).expand_path if explicit_path
 
@@ -139,7 +208,11 @@ class Configen::Config
   def theme_from_state
     return nil unless theme_state_file.file?
 
-    normalize_optional_theme_name(File.read(theme_state_file).strip)
+    theme_name = normalize_optional_theme_name(File.read(theme_state_file).strip)
+    return nil if theme_name.nil?
+    return nil unless resolve_theme_path(theme_name).file?
+
+    theme_name
   end
 
   def load_theme_variables(theme_name)
