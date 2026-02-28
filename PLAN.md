@@ -37,6 +37,8 @@ Rules:
 - Value is source path relative to directory containing `configen.yaml`.
 - Source file -> manages one target file.
 - Source directory -> manages full target directory recursively.
+- Source directory is `exact: true` by default (extra files in target are deleted).
+- Use explicit `exact: false` to keep extra files.
 - `.erb` files are rendered; non-`.erb` files are copied as-is.
 
 ---

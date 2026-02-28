@@ -54,6 +54,21 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal "ok", cfg.variables.value
   end
 
+  def test_directory_string_mapping_is_exact_by_default
+    project = @root.join("dotfiles2")
+    project.join("configs", "nvim").mkpath
+    project.join("configs", "nvim", "init.lua").write("vim.o.number = true")
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/nvim": "configs/nvim"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    nvim = cfg.templates.fetch(".config/nvim")
+
+    assert_equal true, nvim.exact
+  end
+
   def test_finds_configen_yaml_in_current_directory
     project = @root.join("project")
     project.mkpath

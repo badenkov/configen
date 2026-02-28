@@ -66,7 +66,11 @@ class Configen::Config
     templates = (data["templates"] || {}).each_with_object({}) do |(target, raw_spec), result|
       spec = normalize_template_spec(raw_spec)
       source_path = Pathname.new(base_dir).join(spec.fetch("source")).expand_path
-      exact = !!spec["exact"]
+      exact = if spec.key?("exact")
+                !!spec["exact"]
+              else
+                source_path.directory?
+              end
       result[target.to_s] = TemplateSpec.new(source: source_path, exact:)
     end
 
@@ -79,15 +83,15 @@ class Configen::Config
   def normalize_template_spec(raw_spec)
     case raw_spec
     when String
-      { "source" => raw_spec, "exact" => false }
+      { "source" => raw_spec }
     when Hash
       source = raw_spec["source"] || raw_spec[:source]
       raise "Template spec must include `source`" if source.nil?
 
-      {
-        "source" => source.to_s,
-        "exact" => raw_spec["exact"] || raw_spec[:exact] || false
-      }
+      spec = { "source" => source.to_s }
+      exact = raw_spec["exact"] || raw_spec[:exact]
+      spec["exact"] = exact unless exact.nil?
+      spec
     else
       raise "Template spec must be a string or mapping, got #{raw_spec.class}"
     end

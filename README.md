@@ -53,7 +53,8 @@ Rules:
   - mapping with `source` and optional `exact`.
 - `.erb` files are rendered.
 - Other files are copied as-is.
-- `exact: true` for a managed directory removes extra target files not present in source.
+- For directory sources, `exact` is `true` by default (extra target files are removed).
+- Set `exact: false` to keep extra files in target.
 
 Template example:
 
