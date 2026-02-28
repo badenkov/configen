@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-class Configen::Environment
+class Configen::Command
   def initialize(config)
     @config = config
-    @home_path = Pathname.new(ENV["HOME"] || Dir.home)
+    @home_path = Pathname.new(Dir.home)
     @generator = Configen::Generator.new(home_path: @home_path)
     @templates = config.templates
   end

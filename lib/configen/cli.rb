@@ -5,7 +5,7 @@ class Configen::CLI < Thor
 
   desc "version", "Version"
   def version
-    build_env do |_env, config|
+    build_env do |_command, config|
       puts "Version: #{Configen::VERSION}"
 
       say "\nConfig", :bold
@@ -23,8 +23,8 @@ class Configen::CLI < Thor
   desc "diff", "Show planned changes in $HOME"
   method_option :theme, type: :string
   def diff
-    build_env do |env, config|
-      env.diff(theme: options["theme"]).each do |line|
+    build_env do |command, config|
+      command.diff(theme: options["theme"]).each do |line|
         say line
       end
       say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
@@ -36,12 +36,12 @@ class Configen::CLI < Thor
   method_option :force, type: :boolean, default: false
   method_option :theme, type: :string
   def apply
-    build_env do |env, config|
-      if env.apply(dry_run: options["dry_run"], force: options["force"], theme: options["theme"])
+    build_env do |command, config|
+      if command.apply(dry_run: options["dry_run"], force: options["force"], theme: options["theme"])
         say(options["dry_run"] ? "Dry run complete" : "Apply complete", :green)
         say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
       else
-        env.errors.each do |k, v|
+        command.errors.each do |k, v|
           say k, %i[red bold]
           v.each do |msg|
             say "  #{msg}", :red
@@ -53,7 +53,7 @@ class Configen::CLI < Thor
 
   desc "theme [NAME]", "Show active theme or set active theme"
   def theme(name = nil)
-    build_env do |_env, config|
+    build_env do |_command, config|
       config.set_active_theme!(name) if name
       active = config.current_theme
 
@@ -77,11 +77,14 @@ class Configen::CLI < Thor
       end
 
       @config ||= Configen::Config.new(config: options["config"])
-      raise Thor::Error, "Config file not found. Pass -c /path/to/configen.yaml or run from a directory containing configen.yaml." unless @config.config_path
+      unless @config.config_path
+        raise Thor::Error,
+              "Config file not found. Pass -c /path/to/configen.yaml or run from a directory containing configen.yaml."
+      end
 
-      @environment ||= Configen::Environment.new(@config)
+      @command ||= Configen::Command.new(@config)
 
-      yield @environment, @config
+      yield @command, @config
     end
   end
 end

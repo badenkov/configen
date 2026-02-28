@@ -13,13 +13,12 @@ class Configen::Config
 
   TemplateSpec = Struct.new(:source, keyword_init: true)
 
-  attr_reader :settings
+  attr_reader :settings, :config_path
 
-  def initialize(env: ENV, home: (ENV["HOME"] || Dir.home), config: nil, overrides: {})
+  def initialize(env: ENV, home: Dir.home, config: nil)
     @env = env
     @home = home
     @config_path = resolve_config_path(config)
-    @overrides = overrides
 
     @settings = OpenStruct.new(build_config)
   end
@@ -35,10 +34,6 @@ class Configen::Config
 
   def state_path
     @settings.state_path.to_s
-  end
-
-  def config_path
-    @config_path
   end
 
   def current_theme(override = nil)
@@ -213,11 +208,11 @@ class Configen::Config
 
     merged = base.dup
     override.each do |key, value|
-      if merged[key].is_a?(Hash) && value.is_a?(Hash)
-        merged[key] = deep_merge_hashes(merged[key], value)
-      else
-        merged[key] = value
-      end
+      merged[key] = if merged[key].is_a?(Hash) && value.is_a?(Hash)
+                      deep_merge_hashes(merged[key], value)
+                    else
+                      value
+                    end
     end
     merged
   end

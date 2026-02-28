@@ -101,7 +101,7 @@ class Configen::Generator
 
       if File.exist?(dst) || File.symlink?(dst)
         if File.symlink?(dst)
-          if !force
+          unless force
             plan[:conflict] << rel
             @errors["conflicts"] ||= []
             @errors["conflicts"] << "#{rel}: target is a symlink (use --force to replace)"

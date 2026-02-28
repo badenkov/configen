@@ -2,7 +2,7 @@
 
 require "test_helper"
 
-class Configen::EnvironmentTest < Minitest::Test
+class Configen::CommandTest < Minitest::Test
   def around
     Dir.mktmpdir do |dir|
       @root = Pathname.new(dir)
@@ -19,7 +19,7 @@ class Configen::EnvironmentTest < Minitest::Test
   end
 
   def with_home
-    previous = ENV["HOME"]
+    previous = Dir.home
     ENV["HOME"] = @home.to_s
     yield
   ensure
@@ -38,11 +38,11 @@ class Configen::EnvironmentTest < Minitest::Test
     cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
 
     with_home do
-      env = Configen::Environment.new(cfg)
-      diff = env.diff
+      command = Configen::Command.new(cfg)
+      diff = command.diff
       assert_includes diff, "CREATE   .config/kitty/kitty.conf"
 
-      assert env.apply
+      assert command.apply
       assert_equal "font_size 12\n", @home.join(".config/kitty/kitty.conf").read
     end
   end
@@ -62,8 +62,8 @@ class Configen::EnvironmentTest < Minitest::Test
     cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
 
     with_home do
-      env = Configen::Environment.new(cfg)
-      assert env.apply
+      command = Configen::Command.new(cfg)
+      assert command.apply
       assert_equal "font_size 20\n", @home.join(".config/kitty/kitty.conf").read
     end
   end
@@ -85,8 +85,8 @@ class Configen::EnvironmentTest < Minitest::Test
     cfg.set_active_theme!("screencast")
 
     with_home do
-      env = Configen::Environment.new(cfg)
-      assert env.apply
+      command = Configen::Command.new(cfg)
+      assert command.apply
       assert_equal "font_size 20\n", @home.join(".config/kitty/kitty.conf").read
     end
   end
