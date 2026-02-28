@@ -1,170 +1,152 @@
-# Configen Development Plan
+# Configen Plan (Simplified Home Config Management)
 
-## Current State
+## Goal
 
-Configen works but has incomplete features and some rough edges.
-
-### What works
-- [x] ERB template rendering
-- [x] Theme switching (`configen theme <name>`)
-- [x] Hooks (before/after with glob patterns)
-- [x] NixOS module integration
-- [x] State persistence (`~/.local/state/configen/`)
-- [x] Flake support (`-f ./flake.nix`)
-
-### What's incomplete
-- [ ] Wrappers instead of symlinks
-- [ ] Profiles (composable feature flags)
-- [ ] Hardcoded paths in hooks
+`configen` manages user configs directly in `$HOME` with a static project config.
+No generated config file, no symlink modes, no complex path logic.
 
 ---
 
-## Phase 1: Wrappers
+## Directory and Config Format
 
-**Goal:** Use wrappers instead of symlinks for apps that support custom config paths.
+Project layout:
 
-### Why
-- Cleaner than symlinks in `~/.config/`
-- Config location is explicit
-- Works better with Nix philosophy
-
-### Apps that support wrappers
-| App | Flag | Example |
-|-----|------|---------|
-| kitty | `--config` | `kitty --config $STATE/kitty/kitty.conf` |
-| nvim | `-u` | `nvim -u $STATE/nvim/init.lua` |
-| bat | `--config-file` | `bat --config-file $STATE/bat/config` |
-| qutebrowser | `--config-py` | `qutebrowser --config-py $STATE/qutebrowser/config.py` |
-
-### Apps that need symlinks (fallback)
-| App | Reason |
-|-----|--------|
-| yazi | No config flag |
-| niri | No config flag |
-| waybar | Config path hardcoded |
-
-### Implementation
-
-1. **Add wrapper generation to NixOS module**
-   ```nix
-   configen.wrappers = {
-     kitty = {
-       package = pkgs.kitty;
-       configPath = "kitty/kitty.conf";
-     };
-   };
-   ```
-
-2. **Generate wrapper scripts**
-   ```bash
-   #!/bin/sh
-   exec /nix/store/.../kitty --config ~/.local/state/configen/current/kitty/kitty.conf "$@"
-   ```
-
-3. **Add wrappers to environment.systemPackages**
-
-4. **Remove symlink hooks for wrapped apps**
-
----
-
-## Phase 2: Clean up hardcoded paths
-
-**Goal:** Make hooks portable.
-
-### Current problem
-```nix
-script = ''
-  ln -nsf /home/badenkov/.local/state/configen/current/yazi/theme.toml ...
-'';
+```text
+<project-root>/
+  configen.yaml
+  configs/
+    kitty/
+      kitty.conf.erb
+    nvim/
+      init.lua
 ```
 
-### Solution
-Add variables to hook scripts:
-```nix
-script = ''
-  ln -nsf $CONFIGEN_STATE/yazi/theme.toml $HOME/.config/yazi/theme.toml
-'';
+Config file (`configen.yaml`) is static and committed to git.
+
+Example:
+
+```yaml
+templates:
+  ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
+  ".config/nvim": "configs/nvim"
 ```
 
-### Implementation
+Rules:
 
-1. **Environment variables in hook execution**
-   - `$CONFIGEN_STATE` → `~/.local/state/configen/current`
-   - `$CONFIGEN_CONFIG` → config directory
-   - `$HOME` → already available
-
-2. **Update Generator#run hooks**
-   ```ruby
-   env = {
-     "CONFIGEN_STATE" => @output_path.to_s,
-     "HOME" => Dir.home
-   }
-   Open3.capture3(env, "bash", "-c", script)
-   ```
-
-3. **Update all hooks in modules/configen.nix**
+- Key in `templates` is target path relative to `$HOME`.
+- Value is source path relative to directory containing `configen.yaml`.
+- Source file -> manages one target file.
+- Source directory -> manages full target directory recursively.
+- `.erb` files are rendered; non-`.erb` files are copied as-is.
 
 ---
 
-## Phase 3: Profiles (Future)
+## Apply Model
 
-**Goal:** Composable feature flags that can be combined.
+Single mode only: write/copy files into `$HOME`.
 
-### Concept
-- **Themes** = mutually exclusive (light OR dark)
-- **Profiles** = composable (work AND minimal AND no-animations)
+Flow:
 
-### Use cases
-- `work` profile: different git email, no distractions
-- `minimal` profile: reduced UI, faster startup
-- `presentation` profile: large fonts, high contrast
+1. Parse `configen.yaml`.
+2. Build desired file set in memory (render + collect).
+3. Compute diff against current `$HOME`.
+4. Apply changes.
 
-### Implementation ideas
+Operations:
 
-1. **Profile structure**
-   ```
-   profiles/
-   ├── work/
-   │   └── settings.yaml
-   ├── minimal/
-   │   └── settings.yaml
-   └── presentation/
-       └── settings.yaml
-   ```
-
-2. **Merge order**
-   ```
-   defaults → theme → profile1 → profile2 → ...
-   ```
-
-3. **CLI**
-   ```bash
-   configen profile add work
-   configen profile remove minimal
-   configen profiles  # list active
-   ```
-
-4. **State**
-   ```
-   ~/.local/state/configen/
-   ├── theme      # "tokyo-night"
-   └── profiles   # "work\nminimal"
-   ```
+- `create`
+- `update`
+- `conflict`
+- optional `delete` (only for explicitly managed directories and only when enabled)
 
 ---
 
-## Priority
+## Safety Defaults
 
-| Phase | Priority | Effort |
-|-------|----------|--------|
-| Phase 1: Wrappers | High | Medium |
-| Phase 2: Clean up paths | Medium | Low |
-| Phase 3: Profiles | Low | High |
+Keep defaults conservative:
+
+- Do not overwrite conflicting unmanaged files silently.
+- Stop apply on conflicts unless user passes `--force`.
+- Do not delete extra files by default.
+- If/when delete is needed, require explicit per-template setting.
+
+Future optional extension:
+
+```yaml
+templates:
+  ".config/nvim":
+    source: "configs/nvim"
+    exact: true
+```
+
+`exact: true` means files absent in source are removed from target directory.
 
 ---
 
-## Notes
+## CLI Shape
 
-- Keep it simple, avoid premature optimization
-- Nix handles caching, no need for custom cache logic
-- Watch mode is experimental, not a priority
+- `configen diff` -> show planned changes in `$HOME`.
+- `configen apply` -> apply planned changes.
+- `configen apply --dry-run` -> simulate apply.
+- Config path resolution:
+  - explicit via CLI arg (for example `-c /path/to/configen.yaml`);
+  - fallback: look for `./configen.yaml` in current working directory.
+
+(`render` command may remain internal implementation detail and not required as a user-facing step.)
+
+---
+
+## NixOS / Home Manager Role
+
+Nix module still has value, but much smaller scope.
+
+Use module for:
+
+- installing `configen`,
+- passing path to `configen.yaml`,
+- running `configen apply` in activation.
+
+Do not use module for:
+
+- generating template mapping,
+- generating per-file symlink hooks.
+
+So nix becomes orchestration, and `configen.yaml` becomes the source of truth.
+
+Suggested activation idea:
+
+1. optional check: `configen diff --fail-on-conflict`
+2. activation: `configen apply`
+
+---
+
+## Implementation Phases
+
+1. Config format finalization
+- add/lock `templates` mapping in YAML parser
+- paths resolved relative to config file
+
+2. In-memory desired state builder
+- unify file + directory handling
+- keep rendered content and file metadata
+
+3. Diff + apply
+- implement create/update/conflict
+- dry-run output
+
+4. Safe deletion (optional)
+- add explicit `exact: true`
+- delete only inside explicitly managed directories
+
+5. Nix module cleanup
+- remove mapping generation concerns
+- keep only activation integration
+
+---
+
+## Done Criteria
+
+- User manages configs via `configen.yaml` + `configs/`.
+- No generated config mapping from nix.
+- `configen apply` updates `$HOME` directly.
+- Behavior is predictable, idempotent, and conflict-safe.

@@ -1,13 +1,8 @@
 # Configen
 
-Fast configuration file manager with ERB templating and theme support. Designed for NixOS but works standalone.
+Fast home-config manager with ERB templating.
 
-## Why?
-
-- **Faster than home-manager** - change a template, run `configen apply`, done in milliseconds
-- **Theme switching** - switch color themes on the fly with `configen theme <name>`
-- **Nix integration** - templates live next to NixOS modules, not in a separate dotfiles directory
-- **Hooks** - run commands when specific configs change (reload app, create symlinks, etc.)
+It renders files from your project and writes them directly to `$HOME`.
 
 ## Installation
 
@@ -19,112 +14,56 @@ nix build .#configen
 ## Usage
 
 ```bash
-# Apply configs using flake
-configen apply -f ./flake.nix
+# Use config from current directory (./configen.yaml)
+configen diff
+configen apply
 
-# Apply using config file
-configen apply --config ~/.config/configen/config.json
+# Or pass config explicitly
+configen diff -c ~/dotfiles/configen.yaml
+configen apply -c ~/dotfiles/configen.yaml
 
-# List available themes
-configen themes
-
-# Show current theme
-configen theme
-
-# Switch theme
-configen theme tokyo-night-storm
-
-# Show version and config info
-configen version
+# Dry run
+configen apply --dry-run
 ```
 
 ## How it works
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ configen apply -f ./flake.nix                           │
-└─────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────────────────────┐
-│ 1. nix build .#config → config.json                     │
-│    (templates, hooks, themes_path)                      │
-└─────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────────────────────┐
-│ 2. Load theme from ~/.local/state/configen/theme        │
-│    (or "default" if not set)                            │
-└─────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────────────────────┐
-│ 3. Render templates with theme variables                │
-│    Output: ~/.local/state/configen/current/             │
-└─────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌─────────────────────────────────────────────────────────┐
-│ 4. Run hooks (before/after) based on changed files      │
-└─────────────────────────────────────────────────────────┘
+configen.yaml + configs/ -> in-memory render -> diff with $HOME -> apply changes
 ```
 
 ## Config structure
 
-```json
-{
-  "templates": {
-    "kitty/kitty.conf": "modules/templates/kitty.conf.erb",
-    "waybar/style.css": "modules/templates/waybar/style.css.erb"
-  },
-  "themes_path": "themes_ng",
-  "hooks": [
-    {
-      "pattern": "kitty/*",
-      "script": "pkill -USR1 kitty || true",
-      "when": "after"
-    }
-  ],
-  "defaults": {
-    "greeting": "Welcome!"
-  }
-}
+```yaml
+templates:
+  ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
+  ".config/nvim":
+    source: "configs/nvim"
+    exact: true
+
+variables:
+  font_size: 13
 ```
 
-## Theme structure
+Rules:
 
-```
-themes_ng/
-├── tokyo-night-storm/
-│   ├── settings.yaml    # Main variables
-│   └── colors.toml      # Additional variables
-├── gruvbox-dark/
-│   └── settings.yaml
-└── catppuccin/
-    └── settings.yaml
-```
+- `templates` key is target path relative to `$HOME`.
+- Template value can be:
+  - string path to source file/dir relative to `configen.yaml`;
+  - mapping with `source` and optional `exact`.
+- `.erb` files are rendered.
+- Other files are copied as-is.
+- `exact: true` for a managed directory removes extra target files not present in source.
 
-Variables from theme files are available in ERB templates:
+Template example:
 
 ```erb
 # kitty.conf.erb
-foreground <%= colors.foreground %>
-background <%= colors.background %>
-```
-
-## State
-
-```
-~/.local/state/configen/
-├── theme              # Current theme name
-└── current/           # Rendered configs
-    ├── kitty/
-    ├── waybar/
-    └── ...
+font_size <%= font_size %>
 ```
 
 ## NixOS module
 
-See `modules/configen.nix` for NixOS integration. It generates `config.json` with:
-- Absolute paths (for nixos-rebuild)
-- Relative paths (for development via `nix build .#config`)
+Nix can be used as orchestration only:
+- install `configen`,
+- run `configen apply -c /path/to/configen.yaml` during activation.

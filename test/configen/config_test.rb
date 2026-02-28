@@ -5,119 +5,64 @@ require "test_helper"
 class Configen::ConfigTest < Minitest::Test
   def around
     Dir.mktmpdir do |dir|
-      @fake_root = Pathname.new(dir)
-      @fake_root.join("etc", "xdg", "configen").mkpath
-      @fake_root.join("home", ".config", "configen").mkpath
-      @fake_root.join("home", ".local", "state", "configen").mkpath
-
-      @fake_env = {
-        "XDG_CONFIG_DIRS" => @fake_root.join("etc", "xdg").to_s,
-        "XDG_CONFIG_HOME" => @fake_root.join("home", ".config").to_s,
-        "XDG_STATE_HOME" => @fake_root.join("home", ".local", "state").to_s,
-        "HOME" => @fake_root.join("home").to_s
+      @root = Pathname.new(dir)
+      @home = @root.join("home")
+      @home.mkpath
+      @env = {
+        "XDG_STATE_HOME" => @home.join(".local", "state").to_s
       }
-      @fake_home = @fake_root.join("home")
       super
     end
   end
 
-  def test_defaults_without_files
-    cfg = Configen::Config.new(env: {}, home: @fake_home)
+  def test_defaults_without_config
+    cfg = Configen::Config.new(env: @env, home: @home)
 
-    assert_equal [], cfg.hooks
+    assert_nil cfg.config_path
     assert_empty cfg.templates
-    assert_nil cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
+    assert_instance_of Configen::StrictOpenStruct, cfg.variables
+    assert_equal @home.join(".local", "state", "configen").to_s, cfg.state_path
   end
 
-  def test_loads_system_config
-    @fake_root.join("etc", "xdg", "configen", "config.json").write({
-      hooks: [
-        { pattern: "git/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "git/config" => "/etc/xdg/configen/template.erb"
-      },
-      themes_path: "/etc/xdg/configen/themes"
-    }.to_json)
+  def test_loads_yaml_and_resolves_template_paths_relative_to_config
+    project = @root.join("dotfiles")
+    project.join("configs", "kitty").mkpath
+    project.join("configs", "kitty", "kitty.conf.erb").write("kitty <%= value %>")
+    project.join("configs", "nvim").mkpath
+    project.join("configs", "nvim", "init.lua").write("vim.o.number = true")
 
-    cfg = Configen::Config.new(env: @fake_env, home: @fake_home)
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
+        ".config/nvim":
+          source: "configs/nvim"
+          exact: true
+      variables:
+        value: "ok"
+    YAML
 
-    assert_equal [{ "pattern" => "git/*", "script" => "notify-send 'hi'" }], cfg.hooks
-    assert_equal({ "git/config" => Pathname.new("/etc/xdg/configen/template.erb") }, cfg.templates)
-    assert_equal "/etc/xdg/configen/themes", cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+
+    kitty = cfg.templates.fetch(".config/kitty/kitty.conf")
+    nvim = cfg.templates.fetch(".config/nvim")
+
+    assert_equal project.join("configen.yaml"), cfg.config_path
+    assert_equal project.join("configs", "kitty", "kitty.conf.erb"), kitty.source
+    assert_equal false, kitty.exact
+    assert_equal project.join("configs", "nvim"), nvim.source
+    assert_equal true, nvim.exact
+    assert_equal "ok", cfg.variables.value
   end
 
-  def test_loads_user_config
-    @fake_root.join("etc", "xdg", "configen", "config.json").write({
-      hooks: [
-        { pattern: "git/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "git/config" => "/etc/xdg/configen/template.erb"
-      },
-      themes_path: "/etc/xdg/configen/themes"
-    }.to_json)
-    @fake_root.join("home", ".config", "configen", "config.json").write({
-      hooks: [
-        { pattern: "niri/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "niri/config.kdl" => "/home/.config/configen/templates/template1.erb"
-      },
-      themes_path: "/home/.config/configen/themes"
-    }.to_json)
+  def test_finds_configen_yaml_in_current_directory
+    project = @root.join("project")
+    project.mkpath
+    config_path = project.join("configen.yaml")
+    config_path.write("templates: {}\n")
 
-    cfg = Configen::Config.new(env: @fake_env, home: @fake_home)
-
-    assert_equal [{ "pattern" => "niri/*", "script" => "notify-send 'hi'" }], cfg.hooks
-
-    assert_equal({ "niri/config.kdl" => Pathname.new("/home/.config/configen/templates/template1.erb") }, cfg.templates)
-    assert_equal "/home/.config/configen/themes", cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
-  end
-
-  def test_overrides_config_path
-    @fake_root.join("etc", "xdg", "configen", "config.json").write({
-      hooks: [
-        { pattern: "git/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "git/config" => "/etc/xdg/configen/template.erb"
-      },
-      themes_path: "/etc/xdg/configen/themes"
-    }.to_json)
-
-    @fake_root.join("home", ".config", "configen", "config.json").write({
-      hooks: [
-        { pattern: "niri/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "niri/config.kdl" => "/home/.config/configen/templates/template1.erb"
-      },
-      themes_path: "/home/.config/configen/themes"
-    }.to_json)
-
-    @fake_root.join("home", "dotfiles").mkpath
-    @fake_root.join("home", "dotfiles", "configen.json").write({
-      hooks: [
-        { pattern: "waybar/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "waybar/config.json" => "/home/dotfiles/templates/template1.erb"
-      },
-      themes_path: "/home/dotfiles/themes"
-    }.to_json)
-
-    cfg = Configen::Config.new(env: @fake_env,
-                               home: @fake_home,
-                               config: @fake_root.join("home", "dotfiles", "configen.json"))
-
-    assert_equal [{ "pattern" => "waybar/*", "script" => "notify-send 'hi'" }], cfg.hooks
-
-    assert_equal({ "waybar/config.json" => Pathname.new("/home/dotfiles/templates/template1.erb") }, cfg.templates)
-    assert_equal "/home/dotfiles/themes", cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
+    Dir.chdir(project) do
+      cfg = Configen::Config.new(env: @env, home: @home)
+      assert_equal config_path, cfg.config_path
+    end
   end
 end
