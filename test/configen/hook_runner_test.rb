@@ -11,13 +11,13 @@ class Configen::HookRunnerTest < Minitest::Test
 
     hooks = [
       Configen::Config::HookSpec.new(
-        name: "ok",
+        description: "ok",
         run: "echo hello; echo warn >&2",
         changed: nil,
         if_command: nil
       ),
       Configen::Config::HookSpec.new(
-        name: "fail",
+        description: "fail",
         run: "echo boom >&2; exit 7",
         changed: nil,
         if_command: nil

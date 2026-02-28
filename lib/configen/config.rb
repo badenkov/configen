@@ -16,7 +16,7 @@ class Configen::Config
   }.freeze
 
   TemplateSpec = Struct.new(:source, keyword_init: true)
-  HookSpec = Struct.new(:name, :run, :changed, :if_command, keyword_init: true)
+  HookSpec = Struct.new(:description, :run, :changed, :if_command, keyword_init: true)
 
   attr_reader :settings, :config_path
 
@@ -160,17 +160,18 @@ class Configen::Config
   def normalize_hook_spec(raw_spec, phase:, index:)
     case raw_spec
     when String
-      HookSpec.new(name: "#{phase}[#{index + 1}]", run: raw_spec, changed: nil, if_command: nil)
+      HookSpec.new(description: raw_spec, run: raw_spec, changed: nil, if_command: nil)
     when Hash
-      name = raw_spec["name"] || raw_spec[:name] || "#{phase}[#{index + 1}]"
       run = raw_spec["run"] || raw_spec[:run]
       raise "`hooks.#{phase}[#{index}].run` is required" if run.nil? || run.to_s.strip.empty?
+
+      description = raw_spec["description"] || raw_spec[:description] || raw_spec["name"] || raw_spec[:name] || run
 
       changed = raw_spec["changed"] || raw_spec[:changed]
       if_command = raw_spec["if"] || raw_spec[:if] || raw_spec["if_command"] || raw_spec[:if_command]
 
       HookSpec.new(
-        name: name.to_s,
+        description: description.to_s,
         run: run.to_s,
         changed: normalize_changed_globs(changed, phase: phase, index: index),
         if_command: if_command&.to_s

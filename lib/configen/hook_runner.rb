@@ -4,7 +4,7 @@ require "open3"
 
 class Configen::HookRunner
   MATCH_FLAGS = File::FNM_PATHNAME | File::FNM_DOTMATCH
-  PlannedHook = Struct.new(:phase, :name, :run, keyword_init: true)
+  PlannedHook = Struct.new(:phase, :description, :run, keyword_init: true)
 
   def initialize(env: ENV, shell: nil, out: $stdout, err: $stderr)
     @env = env
@@ -33,7 +33,7 @@ class Configen::HookRunner
         stderr: stderr
       )
     rescue StandardError => e
-      result[:errors] << "[#{phase}] #{hook.name}: exception while executing `#{hook.run}`: #{e.class}: #{e.message}"
+      result[:errors] << exception_message(phase: phase, hook: hook, error: e)
     end
 
     result
@@ -44,7 +44,7 @@ class Configen::HookRunner
       next unless should_run_for_changes?(hook, changed_paths)
       next unless condition_allows?(hook)
 
-      PlannedHook.new(phase: phase, name: hook.name, run: hook.run)
+      PlannedHook.new(phase: phase, description: hook.description, run: hook.run)
     end
   end
 
@@ -105,7 +105,11 @@ class Configen::HookRunner
     output = compact_output(stdout) if output.empty?
     suffix = output.empty? ? "" : " output: #{output}"
 
-    "[#{phase}] #{hook.name}: command failed (exit #{exit_code}) `#{hook.run}`#{suffix}"
+    "[#{phase}] #{hook.description}: command failed (exit #{exit_code}) `#{hook.run}`#{suffix}"
+  end
+
+  def exception_message(phase:, hook:, error:)
+    "[#{phase}] #{hook.description}: exception while executing `#{hook.run}`: #{error.class}: #{error.message}"
   end
 
   def compact_output(text)

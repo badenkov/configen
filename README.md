@@ -60,13 +60,13 @@ variables:
 
 hooks:
   before:
-    - name: "niri-transition"
+    - description: "niri-transition"
       run: "niri msg action do-screen-transition"
       changed:
         - ".config/niri/**"
       if: "pgrep -x niri >/dev/null"
   after:
-    - name: "reload-kitty"
+    - description: "reload-kitty"
       run: "pkill -USR1 -x kitty"
       changed:
         - ".config/kitty/**"
@@ -90,6 +90,7 @@ Rules:
 - Theme file may be either plain variables mapping or `{ variables: ... }`.
 - Hooks are optional and support:
   - `before` and `after` phases (list of hooks);
+  - `description` label shown in diff/errors (optional, defaults to `run`);
   - `run` command (required);
   - `changed` glob or list of globs to run only for matching changed files;
   - `if` command as runtime condition (run only on exit code `0`).

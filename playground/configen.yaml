@@ -11,15 +11,15 @@ variables:
 
 hooks:
   before:
-    - name: "demo-before"
+    - description: "demo-before"
       run: "echo '[hook before] about to apply configs'"
       changed:
         - ".config/**"
   after:
-    - name: "demo-after"
+    - description: "demo-after"
       run: "echo '[hook after] apply finished'"
       changed:
         - ".config/**"
-    - name: "demo-fail"
+    - description: "demo-fail"
       run: "echo '[hook after] demo failure' >&2; exit 42"
       if: "test \"${CONFIGEN_DEMO_FAIL:-0}\" = \"1\""

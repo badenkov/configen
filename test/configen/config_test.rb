@@ -171,7 +171,7 @@ class Configen::ConfigTest < Minitest::Test
       templates: {}
       hooks:
         before:
-          - name: "pre-transition"
+          - description: "pre-transition"
             run: "echo before"
             changed:
               - ".config/niri/**"
@@ -183,13 +183,13 @@ class Configen::ConfigTest < Minitest::Test
     cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
 
     assert_equal 1, cfg.hooks[:before].size
-    assert_equal "pre-transition", cfg.hooks[:before][0].name
+    assert_equal "pre-transition", cfg.hooks[:before][0].description
     assert_equal "echo before", cfg.hooks[:before][0].run
     assert_equal [".config/niri/**"], cfg.hooks[:before][0].changed
     assert_equal "pgrep -x niri >/dev/null", cfg.hooks[:before][0].if_command
 
     assert_equal 1, cfg.hooks[:after].size
-    assert_equal "after[1]", cfg.hooks[:after][0].name
+    assert_equal "echo after", cfg.hooks[:after][0].description
     assert_equal "echo after", cfg.hooks[:after][0].run
   end
 

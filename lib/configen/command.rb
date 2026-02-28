@@ -65,8 +65,8 @@ class Configen::Command
     lines.concat(plan[:update].map { |path| "UPDATE   #{path}" })
     lines.concat(plan[:delete].map { |path| "DELETE   #{path}" })
     lines.concat(plan[:conflict].map { |path| "CONFLICT #{path}" })
-    lines.concat(before_hooks.map { |hook| "HOOK BEFORE #{hook.name}: #{hook.run}" })
-    lines.concat(after_hooks.map { |hook| "HOOK AFTER  #{hook.name}: #{hook.run}" })
+    lines.concat(before_hooks.map { |hook| "HOOK BEFORE #{hook.description}: #{hook.run}" })
+    lines.concat(after_hooks.map { |hook| "HOOK AFTER  #{hook.description}: #{hook.run}" })
     lines << "NO CHANGES" if lines.empty?
     lines
   end

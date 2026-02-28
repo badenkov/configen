@@ -102,19 +102,19 @@ class Configen::CommandTest < Minitest::Test
         size: 14
       hooks:
         before:
-          - name: "before-ok"
+          - description: "before-ok"
             run: "echo before-ok >> #{log_path}"
             changed: ".config/kitty/**"
-          - name: "before-skip-by-changed"
+          - description: "before-skip-by-changed"
             run: "echo before-skip-by-changed >> #{log_path}"
             changed: ".config/niri/**"
-          - name: "before-skip-by-if"
+          - description: "before-skip-by-if"
             run: "echo before-skip-by-if >> #{log_path}"
             if: "test -f #{missing_flag}"
-          - name: "before-fail"
+          - description: "before-fail"
             run: "echo before-fail >> #{log_path}; exit 5"
         after:
-          - name: "after-ok"
+          - description: "after-ok"
             run: "echo after-ok >> #{log_path}"
     YAML
 
@@ -166,17 +166,17 @@ class Configen::CommandTest < Minitest::Test
         size: 12
       hooks:
         before:
-          - name: "before-match"
+          - description: "before-match"
             run: "echo before"
             changed: ".config/**"
-          - name: "before-skip"
+          - description: "before-skip"
             run: "echo skip"
             changed: ".config/niri/**"
         after:
-          - name: "after-match"
+          - description: "after-match"
             run: "echo after"
             if: "test ! -f #{missing_flag}"
-          - name: "after-skip-by-if"
+          - description: "after-skip-by-if"
             run: "echo after-skip"
             if: "test -f #{missing_flag}"
     YAML
