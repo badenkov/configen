@@ -36,8 +36,9 @@
           export GEM_HOME="$PWD/.devstate/bundle"
           export BUNDLE_PATH="$GEM_HOME"
           export HOME="$PWD/playground/home"
+          export XDG_STATE_HOME="$HOME/.local/state"
           export PATH="$PWD/bin:$BUNDLE_PATH/bin:$PATH"
-          mkdir -p "$HOME"
+          mkdir -p "$HOME" "$XDG_STATE_HOME"
         '';
       };
     });

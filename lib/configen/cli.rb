@@ -21,27 +21,50 @@ class Configen::CLI < Thor
   end
 
   desc "diff", "Show planned changes in $HOME"
+  method_option :theme, type: :string
   def diff
-    build_env do |env|
-      env.diff.each do |line|
+    build_env do |env, config|
+      env.diff(theme: options["theme"]).each do |line|
         say line
       end
+      say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
     end
   end
 
   desc "apply", "Apply configs"
   method_option :dry_run, type: :boolean, default: false
   method_option :force, type: :boolean, default: false
+  method_option :theme, type: :string
   def apply
-    build_env do |env|
-      if env.apply(dry_run: options["dry_run"], force: options["force"])
+    build_env do |env, config|
+      if env.apply(dry_run: options["dry_run"], force: options["force"], theme: options["theme"])
         say(options["dry_run"] ? "Dry run complete" : "Apply complete", :green)
+        say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
       else
         env.errors.each do |k, v|
           say k, %i[red bold]
           v.each do |msg|
             say "  #{msg}", :red
           end
+        end
+      end
+    end
+  end
+
+  desc "theme [NAME]", "Show active theme or set active theme"
+  def theme(name = nil)
+    build_env do |_env, config|
+      config.set_active_theme!(name) if name
+      active = config.current_theme
+
+      say "Active theme: #{active || "(none)"}", :green
+      themes = config.available_themes
+      if themes.empty?
+        say "No themes found", :yellow
+      else
+        themes.each do |theme_name|
+          marker = theme_name == active ? "*" : " "
+          say "#{marker} #{theme_name}"
         end
       end
     end

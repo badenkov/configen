@@ -1,8 +1,10 @@
+themes_dir: "themes"
+
 templates:
   ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
   ".config/nvim": "configs/nvim"
 
 variables:
   font_size: 13
-  theme_name: "tokyo-night"
+  theme_name: "default"
   leader: "space"

@@ -4,16 +4,18 @@ class Configen::Config
   DEFAULTS = {
     templates: {},
     variables: {},
+    themes_dir: "themes",
+    theme: nil,
     state_path: lambda { |env, home|
       Pathname.new(env["XDG_STATE_HOME"] || File.join(home, ".local", "state")).join("configen").to_s
     }
   }.freeze
 
-  TemplateSpec = Struct.new(:source, :exact, keyword_init: true)
+  TemplateSpec = Struct.new(:source, keyword_init: true)
 
   attr_reader :settings
 
-  def initialize(env: ENV, home: Dir.home, config: nil, overrides: {})
+  def initialize(env: ENV, home: (ENV["HOME"] || Dir.home), config: nil, overrides: {})
     @env = env
     @home = home
     @config_path = resolve_config_path(config)
@@ -26,8 +28,9 @@ class Configen::Config
     @settings.templates
   end
 
-  def variables
-    Configen::StrictOpenStruct.new(@settings.variables || {})
+  def variables(theme: nil)
+    merged = deep_merge_hashes(@settings.variables || {}, load_theme_variables(resolve_active_theme(theme)))
+    Configen::StrictOpenStruct.new(merged)
   end
 
   def state_path
@@ -36,6 +39,31 @@ class Configen::Config
 
   def config_path
     @config_path
+  end
+
+  def current_theme(override = nil)
+    resolve_active_theme(override)
+  end
+
+  def available_themes
+    root = themes_root
+    return [] unless root.directory?
+
+    root.children
+        .select(&:directory?)
+        .select { |dir| dir.join("theme.yaml").file? }
+        .map { |dir| dir.basename.to_s }
+        .sort
+  end
+
+  def set_active_theme!(name)
+    theme_name = normalize_theme_name(name)
+    theme_path = resolve_theme_path(theme_name)
+    raise "Theme not found: #{theme_name} (expected #{theme_path})" unless theme_path.file?
+
+    FileUtils.mkdir_p(theme_state_file.dirname)
+    File.write(theme_state_file, "#{theme_name}\n")
+    theme_name
   end
 
   private
@@ -66,17 +94,19 @@ class Configen::Config
     templates = (data["templates"] || {}).each_with_object({}) do |(target, raw_spec), result|
       spec = normalize_template_spec(raw_spec)
       source_path = Pathname.new(base_dir).join(spec.fetch("source")).expand_path
-      exact = if spec.key?("exact")
-                !!spec["exact"]
-              else
-                source_path.directory?
-              end
-      result[target.to_s] = TemplateSpec.new(source: source_path, exact:)
+      result[target.to_s] = TemplateSpec.new(source: source_path)
     end
+    base_variables = data["variables"] || {}
+    raise "`variables` must be a mapping" unless base_variables.is_a?(Hash)
+
+    themes_dir = data["themes_dir"] || DEFAULTS[:themes_dir]
+    raise "`themes_dir` must be a string" unless themes_dir.is_a?(String)
 
     {
       templates:,
-      variables: (data["variables"] || {})
+      variables: base_variables,
+      themes_dir: themes_dir,
+      theme: data["theme"]
     }
   end
 
@@ -87,11 +117,11 @@ class Configen::Config
     when Hash
       source = raw_spec["source"] || raw_spec[:source]
       raise "Template spec must include `source`" if source.nil?
+      if raw_spec.key?("exact") || raw_spec.key?(:exact)
+        raise "Template spec does not support `exact`; directory mappings are always exact"
+      end
 
-      spec = { "source" => source.to_s }
-      exact = raw_spec["exact"] || raw_spec[:exact]
-      spec["exact"] = exact unless exact.nil?
-      spec
+      { "source" => source.to_s }
     else
       raise "Template spec must be a string or mapping, got #{raw_spec.class}"
     end
@@ -104,5 +134,96 @@ class Configen::Config
     return cwd_candidate if cwd_candidate.file?
 
     nil
+  end
+
+  def resolve_active_theme(theme_override = nil)
+    explicit = theme_override.nil? ? nil : normalize_theme_name(theme_override)
+    explicit || theme_from_state || normalize_optional_theme_name(@settings.theme)
+  end
+
+  def theme_from_state
+    return nil unless theme_state_file.file?
+
+    normalize_optional_theme_name(File.read(theme_state_file).strip)
+  end
+
+  def load_theme_variables(theme_name)
+    return {} if theme_name.nil?
+
+    theme_path = resolve_theme_path(theme_name)
+    raise "Theme file not found: #{theme_path}" unless theme_path.file?
+
+    raw_theme = YAML.safe_load_file(theme_path, permitted_classes: [], aliases: false) || {}
+    raise "Theme root must be a mapping: #{theme_path}" unless raw_theme.is_a?(Hash)
+
+    if raw_theme.key?("variables")
+      raise "Theme `variables` must be a mapping: #{theme_path}" unless raw_theme["variables"].is_a?(Hash)
+
+      raw_theme["variables"]
+    else
+      raw_theme
+    end
+  rescue Psych::SyntaxError => e
+    raise "Theme parse error in #{theme_path}: #{e.message}"
+  end
+
+  def resolve_theme_path(theme_name)
+    themes_root.join(theme_name, "theme.yaml").expand_path
+  end
+
+  def themes_root
+    Pathname.new(config_dir).join(@settings.themes_dir)
+  end
+
+  def config_dir
+    return File.dirname(@config_path) if @config_path
+
+    Dir.pwd
+  end
+
+  def theme_state_file
+    digest = Digest::SHA256.hexdigest(theme_scope_key)
+    Pathname.new(state_path).join("themes", "#{digest}.theme")
+  end
+
+  def theme_scope_key
+    @config_path ? @config_path.to_s : Dir.pwd
+  end
+
+  def normalize_theme_name(name)
+    value = name.to_s.strip
+    raise "Theme name cannot be empty" if value.empty?
+
+    validate_theme_name!(value)
+    value
+  end
+
+  def normalize_optional_theme_name(name)
+    return nil if name.nil?
+
+    value = name.to_s.strip
+    return nil if value.empty?
+
+    validate_theme_name!(value)
+    value
+  end
+
+  def validate_theme_name!(name)
+    raise "Theme name must be relative, got absolute path: #{name}" if Pathname.new(name).absolute?
+    raise "Theme name must not include `..`: #{name}" if name.split("/").include?("..")
+  end
+
+  def deep_merge_hashes(base, override)
+    return base unless override.is_a?(Hash)
+
+    merged = base.dup
+    override.each do |key, value|
+      if merged[key].is_a?(Hash) && value.is_a?(Hash)
+        merged[key] = deep_merge_hashes(merged[key], value)
+      else
+        merged[key] = value
+      end
+    end
+    merged
   end
 end

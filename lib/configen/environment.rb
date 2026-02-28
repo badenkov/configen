@@ -10,13 +10,13 @@ class Configen::Environment
 
   attr_reader :templates
 
-  def diff(force: false)
-    plan = @generator.plan(@templates, @config.variables, force:)
+  def diff(force: false, theme: nil)
+    plan = @generator.plan(@templates, @config.variables(theme:), force:)
     format_plan(plan)
   end
 
-  def apply(dry_run: false, force: false)
-    @generator.apply(@templates, @config.variables, dry_run:, force:)
+  def apply(dry_run: false, force: false, theme: nil)
+    @generator.apply(@templates, @config.variables(theme:), dry_run:, force:)
   end
 
   def errors

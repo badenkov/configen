@@ -24,8 +24,8 @@ class Configen::GeneratorTest < Minitest::Test
     @source.join("nvim", "lua.lua").write("print('ok')\n")
 
     templates = {
-      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"), exact: false),
-      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"), exact: false)
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb")),
+      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"))
     }
     vars = Configen::StrictOpenStruct.new({ "size" => 14, "color" => "tokyo-night" })
 
@@ -44,7 +44,7 @@ class Configen::GeneratorTest < Minitest::Test
     @source.join("kitty", "kitty.conf.erb").write("font_size <%= size %>\n")
 
     templates = {
-      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"), exact: false)
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"))
     }
     vars = Configen::StrictOpenStruct.new({ "size" => 14 })
 
@@ -59,7 +59,7 @@ class Configen::GeneratorTest < Minitest::Test
     @home.join(".config", "app").write("not-a-dir")
 
     templates = {
-      ".config/app/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("app", "cfg.erb"), exact: false)
+      ".config/app/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("app", "cfg.erb"))
     }
     vars = Configen::StrictOpenStruct.new({ "value" => "x" })
 
@@ -69,7 +69,7 @@ class Configen::GeneratorTest < Minitest::Test
     refute @generator.apply(templates, vars)
   end
 
-  def test_exact_mode_deletes_extra_files
+  def test_managed_directories_delete_extra_files
     @source.join("nvim").mkpath
     @source.join("nvim", "init.lua").write("set number\n")
 
@@ -79,7 +79,7 @@ class Configen::GeneratorTest < Minitest::Test
     target_dir.join("legacy.lua").write("legacy\n")
 
     templates = {
-      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"), exact: true)
+      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"))
     }
 
     plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
@@ -91,32 +91,13 @@ class Configen::GeneratorTest < Minitest::Test
     refute @home.join(".config/nvim/legacy.lua").exist?
   end
 
-  def test_non_exact_mode_does_not_delete_extra_files
-    @source.join("nvim").mkpath
-    @source.join("nvim", "init.lua").write("set number\n")
-
-    target_dir = @home.join(".config", "nvim")
-    target_dir.mkpath
-    target_dir.join("legacy.lua").write("legacy\n")
-
-    templates = {
-      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"), exact: false)
-    }
-
-    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
-    assert_empty plan[:delete]
-
-    assert @generator.apply(templates, Configen::StrictOpenStruct.new({}))
-    assert @home.join(".config/nvim/legacy.lua").exist?
-  end
-
   def test_conflict_when_target_is_directory_but_template_is_file
     @source.join("kitty").mkpath
     @source.join("kitty", "kitty.conf.erb").write("font_size 12\n")
     @home.join(".config", "kitty", "kitty.conf").mkpath
 
     templates = {
-      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"), exact: false)
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"))
     }
 
     plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
@@ -130,7 +111,7 @@ class Configen::GeneratorTest < Minitest::Test
     @home.join(".config").write("not-a-dir")
 
     templates = {
-      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"), exact: false)
+      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"))
     }
 
     plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
@@ -145,7 +126,7 @@ class Configen::GeneratorTest < Minitest::Test
     File.symlink(@home.join("some-other.conf"), @home.join(".config", "kitty", "kitty.conf"))
 
     templates = {
-      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"), exact: false)
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
     }
 
     plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
@@ -160,7 +141,7 @@ class Configen::GeneratorTest < Minitest::Test
     File.symlink(@home.join("some-other.conf"), @home.join(".config", "kitty", "kitty.conf"))
 
     templates = {
-      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"), exact: false)
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
     }
 
     assert @generator.apply(templates, Configen::StrictOpenStruct.new({}), force: true)
@@ -174,7 +155,7 @@ class Configen::GeneratorTest < Minitest::Test
     @source.join("kitty").mkpath
     @source.join("kitty", "kitty.conf.erb").write("font_size <%= size %>\n")
     templates = {
-      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"), exact: false)
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"))
     }
     vars = Configen::StrictOpenStruct.new({ "size" => 12 })
 
@@ -191,7 +172,7 @@ class Configen::GeneratorTest < Minitest::Test
     @source.join("broken").mkpath
     @source.join("broken", "cfg.erb").write("x=<%= missing.value %>\n")
     templates = {
-      ".config/broken/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("broken", "cfg.erb"), exact: false)
+      ".config/broken/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("broken", "cfg.erb"))
     }
 
     refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
@@ -201,7 +182,7 @@ class Configen::GeneratorTest < Minitest::Test
 
   def test_missing_source_blocks_apply
     templates = {
-      ".config/app/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("app", "missing.erb"), exact: false)
+      ".config/app/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("app", "missing.erb"))
     }
 
     refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))

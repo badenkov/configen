@@ -24,8 +24,8 @@ class Configen::Generator
   def plan(templates, variables = {}, force: false)
     @errors = {}
 
-    desired, exact_roots = build_desired(templates, variables)
-    @last_plan = build_plan(desired, exact_roots, force:)
+    desired, managed_dir_roots = build_desired(templates, variables)
+    @last_plan = build_plan(desired, managed_dir_roots, force:)
   end
 
   def apply(templates, variables = {}, dry_run: false, force: false)
@@ -42,13 +42,13 @@ class Configen::Generator
 
   def build_desired(templates, variables)
     desired = {}
-    exact_roots = []
+    managed_dir_roots = []
 
     templates.each do |target_rel, spec|
       source = spec.source
-      exact_roots << target_rel if spec.exact
 
       if source.directory?
+        managed_dir_roots << target_rel
         source.glob("**/*", File::FNM_DOTMATCH).select(&:file?).each do |src|
           rel = src.relative_path_from(source).to_s
           dst = File.join(target_rel, strip_template_ext(rel))
@@ -59,7 +59,7 @@ class Configen::Generator
       end
     end
 
-    [desired, exact_roots]
+    [desired, managed_dir_roots]
   end
 
   def render_into_desired!(desired, target_rel, source_path, variables)
@@ -73,7 +73,7 @@ class Configen::Generator
     desired[target_rel] = result[:content]
   end
 
-  def build_plan(desired, exact_roots, force:)
+  def build_plan(desired, managed_dir_roots, force:)
     plan = {
       desired:,
       create: [],
@@ -135,7 +135,7 @@ class Configen::Generator
       end
     end
 
-    exact_roots.each do |root_rel|
+    managed_dir_roots.each do |root_rel|
       root_abs = @home_path.join(root_rel)
       next unless root_abs.directory?
 

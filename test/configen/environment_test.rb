@@ -8,6 +8,9 @@ class Configen::EnvironmentTest < Minitest::Test
       @root = Pathname.new(dir)
       @home = @root.join("home")
       @home.mkpath
+      @env = {
+        "XDG_STATE_HOME" => @home.join(".local", "state").to_s
+      }
       @project = @root.join("project")
       @project.mkpath
       @project.join("configs").mkpath
@@ -32,7 +35,7 @@ class Configen::EnvironmentTest < Minitest::Test
         size: 12
     YAML
 
-    cfg = Configen::Config.new(config: @project.join("configen.yaml").to_s)
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
 
     with_home do
       env = Configen::Environment.new(cfg)
@@ -41,6 +44,50 @@ class Configen::EnvironmentTest < Minitest::Test
 
       assert env.apply
       assert_equal "font_size 12\n", @home.join(".config/kitty/kitty.conf").read
+    end
+  end
+
+  def test_theme_overrides_variables_in_render
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("themes", "screencast").mkpath
+    @project.join("themes", "screencast", "theme.yaml").write("size: 20\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      theme: "screencast"
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      env = Configen::Environment.new(cfg)
+      assert env.apply
+      assert_equal "font_size 20\n", @home.join(".config/kitty/kitty.conf").read
+    end
+  end
+
+  def test_apply_uses_theme_from_state
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("themes", "normal").mkpath
+    @project.join("themes", "normal", "theme.yaml").write("size: 12\n")
+    @project.join("themes", "screencast").mkpath
+    @project.join("themes", "screencast", "theme.yaml").write("size: 20\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 10
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    cfg.set_active_theme!("screencast")
+
+    with_home do
+      env = Configen::Environment.new(cfg)
+      assert env.apply
+      assert_equal "font_size 20\n", @home.join(".config/kitty/kitty.conf").read
     end
   end
 end
