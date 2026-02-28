@@ -3,7 +3,7 @@
 require "find"
 
 class Configen::Generator
-  attr_reader :errors, :last_plan
+  attr_reader :errors
 
   def initialize(home_path:)
     @home_path = Pathname.new(home_path)
@@ -169,8 +169,6 @@ class Configen::Generator
     case File.extname(path)
     when ".erb"
       render_erb(path, variables)
-    # when ".liquid"
-    #   render_liquid(path, variables)
     else
       { content: File.read(path) }
     end
@@ -195,15 +193,8 @@ class Configen::Generator
     result
   end
 
-  def render_liquid(path, _variables)
-    File.read(path)
-    # content = File.read(path)
-    # template = Liquid::Template.parse(content)
-    # template.render(variables)
-  end
-
   def strip_template_ext(path)
-    exts = %w[.erb .liquid]
+    exts = %w[.erb]
     path = Pathname(path)
 
     ext = path.extname
