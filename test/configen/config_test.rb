@@ -426,16 +426,13 @@ class Configen::ConfigTest < Minitest::Test
     assert_match(/does not support `exact`/, error.message)
   end
 
-  def test_finds_configen_yaml_in_current_directory
-    project = @root.join("project")
-    project.mkpath
-    config_path = project.join("configen.yaml")
+  def test_finds_configen_yaml_in_default_config_directory
+    config_path = @home.join(".config", "configen", "configen.yaml")
+    config_path.dirname.mkpath
     config_path.write("templates: {}\n")
 
-    Dir.chdir(project) do
-      cfg = Configen::Config.new(env: @env, home: @home)
-      assert_equal config_path, cfg.config_path
-    end
+    cfg = Configen::Config.new(env: @env, home: @home)
+    assert_equal config_path, cfg.config_path
   end
 
   def test_raises_when_theme_file_is_missing

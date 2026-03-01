@@ -162,8 +162,9 @@ font_size <%= font_size %>
 
 Nix can be used as orchestration only:
 - install `configen`,
-- run `configen apply -c /path/to/configen.yaml` during activation.
+- create symlink `$HOME/.config/configen -> <directory with configen.yaml from flake>` during activation,
+- run `configen apply` during activation.
 
-With this module enabled, a system wrapper `configen` is installed:
-- by default it injects `--config <configen.configFile>`;
-- if you pass `-c`/`--config` explicitly, your value takes precedence.
+Default config resolution order:
+- explicit `-c/--config`;
+- `${XDG_CONFIG_HOME:-~/.config}/configen/configen.yaml`.

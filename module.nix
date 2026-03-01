@@ -1,30 +1,11 @@
 {
   config,
   lib,
-  pkgs,
   ...
 }: let
   cfg = config.configen;
   configPath = toString cfg.configFile;
-  wrappedConfigen = pkgs.writeShellScriptBin "configen" ''
-    set -euo pipefail
-
-    has_config=0
-    for arg in "$@"; do
-      case "$arg" in
-        -c|--config|--config=*)
-          has_config=1
-          break
-          ;;
-      esac
-    done
-
-    if [ "$has_config" -eq 1 ]; then
-      exec ${cfg.package}/bin/configen "$@"
-    else
-      exec ${cfg.package}/bin/configen --config ${lib.escapeShellArg configPath} "$@"
-    fi
-  '';
+  configDir = builtins.dirOf configPath;
 in {
   options.configen = {
     enable = lib.mkEnableOption "configen configuration manager";
@@ -41,10 +22,10 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [wrappedConfigen];
-
     system.userActivationScripts.configen = ''
-      ${wrappedConfigen}/bin/configen apply
+      mkdir -p "$HOME/.config"
+      ln -sfn ${lib.escapeShellArg configDir} "$HOME/.config/configen"
+      ${cfg.package}/bin/configen apply
     '';
   };
 }
