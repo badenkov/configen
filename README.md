@@ -35,6 +35,9 @@ configen theme tokyo-night      # persist active theme in state for this config
 # One-off override without persisting
 configen diff --theme screencast
 configen apply --theme screencast
+
+# Validate templates and themes
+configen validate
 ```
 
 ## How it works
@@ -88,6 +91,10 @@ Rules:
   - `theme` from `configen.yaml` (optional fallback).
 - Theme file path: `<themes_dir>/<theme>/theme.yaml` (relative to `configen.yaml`).
 - Theme file may be either plain variables mapping or `{ variables: ... }`.
+- `configen validate` checks:
+  - missing variables used in ERB templates;
+  - missing source template files;
+  - every theme for unknown overrides (keys must exist in base `variables`).
 - Hooks are optional and support:
   - `before` and `after` phases (list of hooks);
   - `description` label shown in diff/errors (optional, defaults to `run`);

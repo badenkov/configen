@@ -33,6 +33,12 @@ class Configen::Generator
     apply_from_plan(dry_run:)
   end
 
+  def validate_templates(templates, variables = {})
+    @errors = {}
+    build_desired(templates, variables)
+    @errors.empty?
+  end
+
   def apply_from_plan(dry_run: false)
     return false unless valid?
     return true if dry_run

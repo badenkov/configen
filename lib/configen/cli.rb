@@ -24,10 +24,15 @@ class Configen::CLI < Thor
   method_option :theme, type: :string
   def diff
     build_env do |command, config|
-      command.diff(theme: options["theme"]).each do |line|
-        say line
+      lines = command.diff(theme: options["theme"])
+      if command.errors.empty?
+        lines.each do |line|
+          say line
+        end
+        say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
+      else
+        print_errors(command.errors)
       end
-      say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
     end
   end
 
@@ -41,19 +46,25 @@ class Configen::CLI < Thor
         say(options["dry_run"] ? "Dry run complete" : "Apply complete", :green)
         say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
       else
-        command.errors.each do |k, v|
-          say k, %i[red bold]
-          v.each do |msg|
-            say "  #{msg}", :red
-          end
-        end
+        print_errors(command.errors)
+      end
+    end
+  end
+
+  desc "validate", "Validate templates and theme variables"
+  def validate
+    build_env do |command, _config|
+      if command.validate
+        say "Validation passed", :green
+      else
+        print_errors(command.errors)
       end
     end
   end
 
   desc "theme [NAME]", "Show active theme or set active theme"
   def theme(name = nil)
-    build_env do |_command, config|
+    build_env do |command, config|
       config.set_active_theme!(name) if name
       active = config.current_theme
 
@@ -67,10 +78,44 @@ class Configen::CLI < Thor
           say "#{marker} #{theme_name}"
         end
       end
+
+      if name && !command.validate_selected(theme: name)
+        print_errors(command.errors)
+      end
     end
   end
 
   no_commands do
+    def print_errors(errors)
+      if errors["templates"]
+        say "Templates", %i[red bold]
+        errors["templates"].each do |msg|
+          say "  #{msg}", :red
+        end
+      end
+
+      (errors["themes"] || {}).each do |theme_name, messages|
+        say "Theme: #{theme_name}", %i[red bold]
+        messages.each do |msg|
+          say "  #{msg}", :red
+        end
+      end
+
+      if errors["hooks"]
+        say "Hooks", %i[red bold]
+        errors["hooks"].each do |msg|
+          say "  #{msg}", :red
+        end
+      end
+
+      if errors["general"]
+        say "Errors", %i[red bold]
+        errors["general"].each do |msg|
+          say "  #{msg}", :red
+        end
+      end
+    end
+
     def build_env
       if options["config"] && !File.file?(options["config"])
         raise Thor::Error, "File #{options["config"]} doesn't exist"

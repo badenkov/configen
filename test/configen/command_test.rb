@@ -193,4 +193,137 @@ class Configen::CommandTest < Minitest::Test
       refute_includes diff, "after-skip-by-if"
     end
   end
+
+  def test_diff_reports_template_errors_in_structured_form
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= missing_size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      diff = command.diff
+      assert_empty diff
+      assert command.errors.key?("templates")
+      assert_includes command.errors["templates"].join("\n"), ".config/kitty/kitty.conf:"
+    end
+  end
+
+  def test_apply_reports_selected_theme_errors_only
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("themes", "broken").mkpath
+    @project.join("themes", "broken", "theme.yaml").write("unknown: 1\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+      theme: "broken"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      refute command.apply
+      assert command.errors.key?("themes")
+      assert command.errors["themes"].key?("broken")
+      refute command.errors.key?("templates")
+    end
+  end
+
+  def test_diff_collects_theme_and_template_errors_together
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= missing_size %>\n")
+    @project.join("themes", "broken").mkpath
+    @project.join("themes", "broken", "theme.yaml").write("unknown: 1\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+      theme: "broken"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      diff = command.diff
+      assert_empty diff
+      assert command.errors.key?("themes")
+      assert command.errors["themes"].key?("broken")
+      assert command.errors.key?("templates")
+      assert_includes command.errors["templates"].join("\n"), ".config/kitty/kitty.conf:"
+    end
+  end
+
+  def test_validate_reports_missing_template_variable
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= missing_size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    command = Configen::Command.new(cfg)
+
+    refute command.validate
+    assert command.errors.key?("templates")
+    joined = command.errors["templates"].join("\n")
+    assert_includes joined, ".config/kitty/kitty.conf:"
+    assert_includes joined, "Undefined variable `missing_size`"
+  end
+
+  def test_validate_reports_unknown_theme_override_variable
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("themes", "broken").mkpath
+    @project.join("themes", "broken", "theme.yaml").write(<<~YAML)
+      size: 14
+      extra:
+        value: 1
+    YAML
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    command = Configen::Command.new(cfg)
+
+    refute command.validate
+    assert command.errors.key?("themes")
+    assert command.errors["themes"].key?("broken")
+    assert_includes command.errors["themes"]["broken"], "Unknown override `extra` (not found in base `variables`)"
+  end
+
+  def test_validate_checks_all_themes_by_default
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("themes", "ok").mkpath
+    @project.join("themes", "ok", "theme.yaml").write("size: 14\n")
+    @project.join("themes", "broken").mkpath
+    @project.join("themes", "broken", "theme.yaml").write("unknown: 1\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    command = Configen::Command.new(cfg)
+
+    refute command.validate
+    assert command.errors.key?("themes")
+    assert command.errors["themes"].key?("broken")
+    refute command.errors["themes"].key?("ok")
+  end
 end

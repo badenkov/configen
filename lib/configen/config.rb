@@ -70,6 +70,12 @@ class Configen::Config
     theme_name
   end
 
+  def validate_theme_overrides(theme_name)
+    name = normalize_theme_name(theme_name)
+    theme_vars = load_theme_variables(name)
+    collect_unknown_override_keys(@settings.variables || {}, theme_vars)
+  end
+
   private
 
   def build_config
@@ -289,5 +295,37 @@ class Configen::Config
                     end
     end
     merged
+  end
+
+  def collect_unknown_override_keys(base, override, path = nil, errors = [])
+    return errors unless override.is_a?(Hash)
+
+    override.each do |raw_key, value|
+      key = raw_key.to_s
+      key_path = path.nil? ? key : "#{path}.#{key}"
+      base_value = fetch_hash_key(base, key)
+      if base_value == :__missing__
+        errors << "Unknown override `#{key_path}` (not found in base `variables`)"
+        next
+      end
+
+      next unless value.is_a?(Hash)
+      next unless base_value.is_a?(Hash)
+
+      collect_unknown_override_keys(base_value, value, key_path, errors)
+    end
+
+    errors
+  end
+
+  def fetch_hash_key(hash, key)
+    return :__missing__ unless hash.is_a?(Hash)
+
+    return hash[key] if hash.key?(key)
+
+    sym_key = key.to_sym
+    return hash[sym_key] if hash.key?(sym_key)
+
+    :__missing__
   end
 end
