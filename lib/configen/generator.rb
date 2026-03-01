@@ -1,12 +1,14 @@
 # frozen_string_literal: true
 
 require "find"
+require "digest"
 
 class Configen::Generator
   attr_reader :errors, :last_plan
 
-  def initialize(home_path:)
+  def initialize(home_path:, manifest_path: nil)
     @home_path = Pathname.new(home_path)
+    @manifest_path = manifest_path.nil? ? nil : Pathname.new(manifest_path)
     @errors = {}
     @last_plan = {
       create: [],
@@ -45,6 +47,8 @@ class Configen::Generator
 
     write_files!
     delete_files!
+    prune_empty_directories!
+    persist_manifest!
     @errors.empty?
   end
 
@@ -159,10 +163,39 @@ class Configen::Generator
       end
     end
 
+    collect_manifest_stale_entries(plan, desired)
+
     %i[create update delete conflict unchanged].each do |kind|
       plan[kind] = plan[kind].uniq.sort
     end
     plan
+  end
+
+  def collect_manifest_stale_entries(plan, desired)
+    manifest = load_manifest
+    return if manifest.empty?
+
+    stale_paths = manifest.keys - desired.keys
+    stale_paths.each do |rel|
+      path = @home_path.join(rel)
+      next unless path.file? || path.symlink?
+
+      recorded_sha = manifest[rel]
+      if stale_entry_safe_to_delete?(path, recorded_sha)
+        plan[:delete] << rel
+      else
+        plan[:conflict] << rel
+        @errors["conflicts"] ||= []
+        @errors["conflicts"] << "#{rel}: stale generated file was modified; refusing to delete"
+      end
+    end
+  end
+
+  def stale_entry_safe_to_delete?(path, recorded_sha)
+    return false if recorded_sha.to_s.strip.empty?
+    return false unless path.file?
+
+    Digest::SHA256.file(path.to_s).hexdigest == recorded_sha
   end
 
   def render_template(path, variables = {})
@@ -251,5 +284,64 @@ class Configen::Generator
       dst = @home_path.join(rel)
       FileUtils.rm_f(dst)
     end
+  end
+
+  def prune_empty_directories!
+    deleted_dirs = @last_plan[:delete].map do |rel|
+      @home_path.join(rel).dirname
+    end
+
+    deleted_dirs.uniq.each do |dir|
+      prune_directory_upwards!(dir)
+    end
+  end
+
+  def prune_directory_upwards!(start_dir)
+    current = start_dir
+    home = @home_path.expand_path.to_s
+
+    while current.to_s.start_with?(home) && current != @home_path
+      break unless current.directory?
+      break unless Dir.empty?(current)
+
+      Dir.rmdir(current)
+      current = current.dirname
+    end
+  end
+
+  def load_manifest
+    return {} if @manifest_path.nil? || !@manifest_path.file?
+
+    raw = YAML.safe_load_file(@manifest_path, permitted_classes: [], aliases: false) || {}
+    files = raw["files"]
+    return {} unless files.is_a?(Hash)
+
+    files.each_with_object({}) do |(rel, info), manifest|
+      next unless rel.is_a?(String) && info.is_a?(Hash)
+
+      sha = info["sha256"]
+      manifest[rel] = sha.to_s if sha.is_a?(String)
+    end
+  rescue Psych::SyntaxError => e
+    @errors["state"] ||= []
+    @errors["state"] << "Manifest parse error in #{@manifest_path}: #{e.message}"
+    {}
+  end
+
+  def persist_manifest!
+    return if @manifest_path.nil?
+    return unless @errors.empty?
+
+    files = @last_plan[:desired].transform_values do |content|
+      { "sha256" => Digest::SHA256.hexdigest(content) }
+    end
+
+    data = {
+      "version" => 1,
+      "files" => files
+    }
+
+    FileUtils.mkdir_p(@manifest_path.dirname)
+    File.write(@manifest_path, YAML.dump(data))
   end
 end

@@ -4,7 +4,8 @@ class Configen::Command
   def initialize(config)
     @config = config
     @home_path = Pathname.new(Dir.home)
-    @generator = Configen::Generator.new(home_path: @home_path)
+    manifest_path = Pathname.new(config.state_path).join("rendered.yaml")
+    @generator = Configen::Generator.new(home_path: @home_path, manifest_path:)
     @hook_runner = Configen::HookRunner.new
     @templates = config.templates
     @errors = {}

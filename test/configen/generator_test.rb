@@ -10,7 +10,8 @@ class Configen::GeneratorTest < Minitest::Test
       @home.mkpath
       @source = @root.join("configs")
       @source.mkpath
-      @generator = Configen::Generator.new(home_path: @home)
+      @manifest = @root.join("state", "rendered.yaml")
+      @generator = Configen::Generator.new(home_path: @home, manifest_path: @manifest)
       super
     end
   end
@@ -188,5 +189,56 @@ class Configen::GeneratorTest < Minitest::Test
     refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
     assert @generator.errors.key?(".config/app/cfg")
     refute @home.join(".config/app/cfg").exist?
+  end
+
+  def test_manifest_deletes_stale_file_when_template_removed
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf").write("font_size 12\n")
+    @source.join("nvim").mkpath
+    @source.join("nvim", "init.lua").write("set number\n")
+
+    initial_templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf")),
+      ".config/nvim/init.lua" => Configen::Config::TemplateSpec.new(source: @source.join("nvim", "init.lua"))
+    }
+    updated_templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
+    }
+
+    assert @generator.apply(initial_templates, Configen::StrictOpenStruct.new({}))
+    assert @home.join(".config/nvim/init.lua").exist?
+
+    plan = @generator.plan(updated_templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".config/nvim/init.lua"], plan[:delete]
+
+    assert @generator.apply_from_plan
+    refute @home.join(".config/nvim/init.lua").exist?
+  end
+
+  def test_manifest_marks_modified_stale_file_as_conflict
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf").write("font_size 12\n")
+    @source.join("nvim").mkpath
+    @source.join("nvim", "init.lua").write("set number\n")
+
+    initial_templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf")),
+      ".config/nvim/init.lua" => Configen::Config::TemplateSpec.new(source: @source.join("nvim", "init.lua"))
+    }
+    updated_templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
+    }
+
+    assert @generator.apply(initial_templates, Configen::StrictOpenStruct.new({}))
+    @home.join(".config/nvim/init.lua").write("manual override\n")
+
+    plan = @generator.plan(updated_templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".config/nvim/init.lua"], plan[:conflict]
+    assert_includes(
+      @generator.errors["conflicts"].join("\n"),
+      ".config/nvim/init.lua: stale generated file was modified"
+    )
+    refute @generator.apply_from_plan
+    assert @home.join(".config/nvim/init.lua").exist?
   end
 end

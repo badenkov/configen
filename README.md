@@ -124,6 +124,9 @@ Rules:
   - `variables` from `configen.yaml`;
   - active theme overrides from `<themes_dir>/<theme>/theme.yaml`;
   - saved variable overrides `${XDG_STATE_HOME:-~/.local/state}/configen/variables.yaml`.
+- Successful `apply` stores rendered files manifest in `${XDG_STATE_HOME:-~/.local/state}/configen/rendered.yaml`.
+- If a template target is removed/renamed, stale files from previous manifest are pruned automatically.
+- Stale file is deleted only when its current content hash matches the last rendered hash (manual edits are reported as conflict and preserved).
 - `configen set` always stores `VALUE` as a string (no YAML parsing of CLI value).
 - Override types are validated against the default variable value type inferred from YAML/Ruby values (`string`, `number`, `boolean`, `array`, `object`, `nil`).
 - Theme file path: `<themes_dir>/<theme>/theme.yaml` (relative to `configen.yaml`).
@@ -167,4 +170,5 @@ Nix can be used as orchestration only:
 
 Default config resolution order:
 - explicit `-c/--config`;
+- `./configen.yaml`;
 - `${XDG_CONFIG_HOME:-~/.config}/configen/configen.yaml`.
