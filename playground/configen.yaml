@@ -20,6 +20,14 @@ hooks:
       run: "echo '[hook after] apply finished'"
       changed:
         - ".config/**"
+    - description: "demo-after nvim"
+      run: "echo '[hook after] apply finished'"
+      changed:
+        - ".config/nvim/**"
+    - description: "demo-after kitty"
+      run: "echo '[hook after] apply finished'"
+      changed:
+        - ".config/kitty/**"
     - description: "demo-fail"
       run: "echo '[hook after] demo failure' >&2; exit 42"
       if: "test \"${CONFIGEN_DEMO_FAIL:-0}\" = \"1\""
