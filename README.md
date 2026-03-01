@@ -163,3 +163,7 @@ font_size <%= font_size %>
 Nix can be used as orchestration only:
 - install `configen`,
 - run `configen apply -c /path/to/configen.yaml` during activation.
+
+With this module enabled, a system wrapper `configen` is installed:
+- by default it injects `--config <configen.configFile>`;
+- if you pass `-c`/`--config` explicitly, your value takes precedence.
