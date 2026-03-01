@@ -246,6 +246,9 @@ class Configen::Config
   def resolve_config_path(explicit_path)
     return Pathname.new(explicit_path).expand_path if explicit_path
 
+    cwd_candidate = Pathname.new(Dir.pwd).join("configen.yaml")
+    return cwd_candidate if cwd_candidate.file?
+
     default_candidate = default_config_path
     return default_candidate if default_candidate.file?
 

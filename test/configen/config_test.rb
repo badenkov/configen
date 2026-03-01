@@ -435,6 +435,18 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal config_path, cfg.config_path
   end
 
+  def test_prefers_configen_yaml_in_current_directory
+    project = @root.join("project")
+    project.mkpath
+    config_path = project.join("configen.yaml")
+    config_path.write("templates: {}\n")
+
+    Dir.chdir(project) do
+      cfg = Configen::Config.new(env: @env, home: @home)
+      assert_equal config_path, cfg.config_path
+    end
+  end
+
   def test_raises_when_theme_file_is_missing
     project = @root.join("dotfiles-missing-theme")
     project.mkpath
