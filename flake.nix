@@ -36,10 +36,7 @@
           export GEM_HOME="$PWD/.devstate/bundle"
           export BUNDLE_PATH="$GEM_HOME"
           export RUBOCOP_CACHE_ROOT="$PWD/.devstate/rubocop_cache"
-          export HOME="$PWD/playground/home"
-          export XDG_STATE_HOME="$HOME/.local/state"
           export PATH="$PWD/bin:$BUNDLE_PATH/bin:$PATH"
-          mkdir -p "$HOME" "$XDG_STATE_HOME" "$RUBOCOP_CACHE_ROOT"
         '';
       };
     });
