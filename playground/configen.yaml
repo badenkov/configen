@@ -5,10 +5,18 @@ templates:
   ".config/nvim": "configs/nvim"
 
 variables:
-  font_size: 13
-  theme_name: "default"
-  leader: "space"
+  font_size:
+    default: 13
+  leader:
+    default: " "
   wallpaper:
+    default: ""
+  theme:
+    default:
+      name: "default"
+      managed_by: "configen"
+      wallpaper: ""
+    system: true
 
 hooks:
   before:

@@ -97,7 +97,7 @@ class Configen::CommandTest < Minitest::Test
       templates:
         ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
       variables:
-        size: 10
+        size: "10"
     YAML
 
     cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
@@ -345,6 +345,58 @@ class Configen::CommandTest < Minitest::Test
     refute command.validate
     assert command.errors.key?("variables")
     assert_includes command.errors["variables"], "Unknown override `unknown` (not found in base `variables`)"
+  end
+
+  def test_validate_reports_system_variable_override_from_state
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= font_size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+        font_size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    state_file = Pathname.new(cfg.state_path).join("variables.yaml")
+    state_file.dirname.mkpath
+    state_file.write(<<~YAML)
+      theme:
+        palette:
+          bg: "#111111"
+    YAML
+
+    command = Configen::Command.new(cfg)
+    refute command.validate
+    assert command.errors.key?("variables")
+    assert_includes command.errors["variables"], "System variable `theme` cannot be overridden"
+  end
+
+  def test_validate_reports_type_mismatch_for_variable_override_from_state
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= font_size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        font_size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    state_file = Pathname.new(cfg.state_path).join("variables.yaml")
+    state_file.dirname.mkpath
+    state_file.write(<<~YAML)
+      font_size:
+        value: 1
+    YAML
+
+    command = Configen::Command.new(cfg)
+    refute command.validate
+    assert command.errors.key?("variables")
+    assert_includes command.errors["variables"], "Type mismatch for `font_size`: expected number, got object"
   end
 
   def test_validate_checks_all_themes_by_default

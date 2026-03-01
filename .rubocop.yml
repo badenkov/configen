@@ -47,7 +47,7 @@ Metrics/BlockNesting:
   Enabled: false
 
 Metrics/ClassLength:
-  Max: 250
+  Enabled: false
 
 # Allow OpenStruct for MVP
 Style/OpenStructUse:

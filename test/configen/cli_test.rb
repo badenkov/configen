@@ -15,8 +15,8 @@ class Configen::CLITest < Minitest::Test
   end
 
   def with_home
-    previous_home = ENV["HOME"]
-    previous_state = ENV["XDG_STATE_HOME"]
+    previous_home = Dir.home
+    previous_state = ENV.fetch("XDG_STATE_HOME", nil)
     ENV["HOME"] = @home.to_s
     ENV["XDG_STATE_HOME"] = @home.join(".local", "state").to_s
     yield
@@ -121,6 +121,42 @@ class Configen::CLITest < Minitest::Test
 
       assert_includes out, "Deleted override size"
       assert_includes out, "12"
+    end
+  end
+
+  def test_set_rejects_system_variable
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    with_home do
+      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+      error = assert_raises(Thor::Error) { cli.set("theme.palette.bg", "#111111") }
+      assert_includes error.message, "Variable `theme` is system and cannot be overridden"
+    end
+  end
+
+  def test_del_rejects_system_variable
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    with_home do
+      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+      error = assert_raises(Thor::Error) { cli.del("theme.palette.bg") }
+      assert_includes error.message, "Variable `theme` is system and cannot be overridden"
     end
   end
 end

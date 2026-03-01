@@ -1,4 +1,3 @@
-font_size: 14
-theme_name: "tokyo-night"
-theme_name2: "tokyo-night"
-wallpaper: "themes/tokyo-night/assets/wallpaper.jpg"
+theme:
+  name: "tokyo-night"
+  wallpaper: "themes/tokyo-night/assets/wallpaper.jpg"

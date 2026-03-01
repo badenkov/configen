@@ -4,6 +4,7 @@ class Configen::Config
   DEFAULTS = {
     templates: {},
     variables: {},
+    variable_definitions: {},
     themes_dir: "themes",
     theme: nil,
     hooks: {
@@ -52,6 +53,7 @@ class Configen::Config
 
   def set_variable_override!(path, raw_value)
     keys = parse_variable_path(path)
+    validate_variable_path_mutable!(keys)
     validate_variable_path_exists!(keys)
     overrides = load_variable_overrides
     assign_nested_value!(overrides, keys, normalize_override_value(raw_value))
@@ -60,9 +62,11 @@ class Configen::Config
 
   def delete_variable_override!(path)
     keys = parse_variable_path(path)
+    validate_variable_path_mutable!(keys)
+    validate_variable_path_exists!(keys)
     overrides = load_variable_overrides
     removed = delete_nested_key!(overrides, keys)
-    raise "Override not found for `#{keys.join('.')}`" unless removed
+    raise "Override not found for `#{keys.join(".")}`" unless removed
 
     save_variable_overrides(overrides)
   end
@@ -99,11 +103,11 @@ class Configen::Config
   def validate_theme_overrides(theme_name)
     name = normalize_theme_name(theme_name)
     theme_vars = load_theme_variables(name)
-    collect_unknown_override_keys(@settings.variables || {}, theme_vars)
+    collect_override_validation_errors(@settings.variables || {}, theme_vars, enforce_system: false)
   end
 
   def validate_variable_overrides
-    collect_unknown_override_keys(@settings.variables || {}, load_variable_overrides)
+    collect_override_validation_errors(@settings.variables || {}, load_variable_overrides, enforce_system: true)
   end
 
   private
@@ -142,8 +146,11 @@ class Configen::Config
       source_path = Pathname.new(base_dir).join(spec.fetch("source")).expand_path
       result[target.to_s] = TemplateSpec.new(source: source_path)
     end
-    base_variables = data["variables"] || {}
-    raise "`variables` must be a mapping" unless base_variables.is_a?(Hash)
+    raw_variables = data["variables"] || {}
+    raise "`variables` must be a mapping" unless raw_variables.is_a?(Hash)
+
+    variable_definitions = normalize_variable_definitions(raw_variables)
+    base_variables = variable_definitions.transform_values { |definition| deep_copy(definition[:default]) }
 
     themes_dir = data["themes_dir"] || DEFAULTS[:themes_dir]
     raise "`themes_dir` must be a string" unless themes_dir.is_a?(String)
@@ -151,6 +158,7 @@ class Configen::Config
     {
       templates: templates,
       variables: base_variables,
+      variable_definitions: variable_definitions,
       hooks: normalize_hooks(data["hooks"] || {}),
       themes_dir: themes_dir,
       theme: data["theme"]
@@ -331,7 +339,7 @@ class Configen::Config
     merged
   end
 
-  def collect_unknown_override_keys(base, override, path = nil, errors = [])
+  def collect_override_validation_errors(base, override, path = nil, errors = [], enforce_system: true)
     return errors unless override.is_a?(Hash)
 
     override.each do |raw_key, value|
@@ -343,10 +351,19 @@ class Configen::Config
         next
       end
 
-      next unless value.is_a?(Hash)
-      next unless base_value.is_a?(Hash)
+      if enforce_system && path.nil? && system_variable?(key)
+        errors << "System variable `#{key}` cannot be overridden"
+        next
+      end
 
-      collect_unknown_override_keys(base_value, value, key_path, errors)
+      unless value_type_compatible?(base_value, value)
+        errors << "Type mismatch for `#{key_path}`: expected #{describe_type(base_value)}, got #{describe_type(value)}"
+        next
+      end
+
+      next unless value.is_a?(Hash) && base_value.is_a?(Hash)
+
+      collect_override_validation_errors(base_value, value, key_path, errors, enforce_system:)
     end
 
     errors
@@ -369,14 +386,45 @@ class Configen::Config
     deep_merge_hashes(themed, load_variable_overrides)
   end
 
+  def normalize_variable_definitions(raw_variables)
+    raw_variables.each_with_object({}) do |(raw_name, raw_definition), result|
+      name = raw_name.to_s
+      result[name] = normalize_variable_definition(name, raw_definition)
+    end
+  end
+
+  def normalize_variable_definition(name, raw_definition)
+    return { default: raw_definition, system: false } unless variable_definition_mapping?(raw_definition)
+
+    normalized = stringify_keys(raw_definition)
+    unknown_keys = normalized.keys - %w[default system]
+    raise "`variables.#{name}` definition supports only `default` and `system` keys" unless unknown_keys.empty?
+    unless normalized.key?("default")
+      raise "`variables.#{name}.default` is required when using variable definition mapping"
+    end
+
+    system = normalized.key?("system") ? normalized["system"] : false
+    raise "`variables.#{name}.system` must be boolean" unless [true, false].include?(system)
+
+    { default: normalized["default"], system: system }
+  end
+
+  def variable_definition_mapping?(value)
+    return false unless value.is_a?(Hash)
+
+    value.key?("default") || value.key?(:default) || value.key?("system") || value.key?(:system)
+  end
+
+  def stringify_keys(hash)
+    hash.transform_keys(&:to_s)
+  end
+
   def parse_variable_path(path)
     value = path.to_s.strip
     raise "Variable path cannot be empty" if value.empty?
 
     keys = value.split(".")
-    if keys.any?(&:empty?)
-      raise "Invalid variable path: #{value}"
-    end
+    raise "Invalid variable path: #{value}" if keys.any?(&:empty?)
 
     keys
   end
@@ -384,7 +432,7 @@ class Configen::Config
   def fetch_nested_value!(hash, keys)
     keys.reduce(hash) do |current, key|
       value = fetch_hash_key(current, key)
-      raise "Variable not found: #{keys.join('.')}" if value == :__missing__
+      raise "Variable not found: #{keys.join(".")}" if value == :__missing__
 
       value
     end
@@ -393,7 +441,13 @@ class Configen::Config
   def validate_variable_path_exists!(keys)
     fetch_nested_value!(@settings.variables || {}, keys)
   rescue StandardError
-    raise "Unknown variable path `#{keys.join('.')}` in base `variables`"
+    raise "Unknown variable path `#{keys.join(".")}` in base `variables`"
+  end
+
+  def validate_variable_path_mutable!(keys)
+    return unless system_variable?(keys.first)
+
+    raise "Variable `#{keys.first}` is system and cannot be overridden"
   end
 
   def assign_nested_value!(hash, keys, value)
@@ -465,5 +519,42 @@ class Configen::Config
       parent_hash.delete(key)
       break unless parent_hash.empty?
     end
+  end
+
+  def system_variable?(key)
+    definition = fetch_hash_key(@settings.variable_definitions || {}, key)
+    definition.is_a?(Hash) && definition[:system] == true
+  end
+
+  def value_type_compatible?(expected, actual)
+    if expected.nil?
+      actual.nil?
+    elsif expected.is_a?(Numeric)
+      actual.is_a?(Numeric)
+    elsif [true, false].include?(expected)
+      [true, false].include?(actual)
+    else
+      actual.is_a?(expected.class)
+    end
+  end
+
+  def describe_type(value)
+    if value.nil?
+      "nil"
+    elsif value.is_a?(Numeric)
+      "number"
+    elsif [true, false].include?(value)
+      "boolean"
+    elsif value.is_a?(Hash)
+      "object"
+    elsif value.is_a?(Array)
+      "array"
+    else
+      value.class.name.downcase
+    end
+  end
+
+  def deep_copy(value)
+    Marshal.load(Marshal.dump(value))
   end
 end

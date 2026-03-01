@@ -103,9 +103,7 @@ class Configen::CLI < Thor
         rescue StandardError => e
           available = config.available_themes
           message = e.message
-          unless available.empty?
-            message = "#{message}. Available themes: #{available.join(', ')}"
-          end
+          message = "#{message}. Available themes: #{available.join(", ")}" unless available.empty?
           raise Thor::Error, message
         end
       end
@@ -122,9 +120,7 @@ class Configen::CLI < Thor
         end
       end
 
-      if name && !command.validate_selected(theme: name)
-        print_errors(command.errors)
-      end
+      print_errors(command.errors) if name && !command.validate_selected(theme: name)
     end
   end
 
@@ -158,11 +154,11 @@ class Configen::CLI < Thor
         end
       end
 
-      if errors["general"]
-        say "Errors", %i[red bold]
-        errors["general"].each do |msg|
-          say "  #{msg}", :red
-        end
+      return unless errors["general"]
+
+      say "Errors", %i[red bold]
+      errors["general"].each do |msg|
+        say "  #{msg}", :red
       end
     end
 

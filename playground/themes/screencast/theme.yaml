@@ -1,3 +1,3 @@
-font_size: 20
-theme_name: "screencast"
-wallpaper: "themes/screencast/assets/wallpaper.jpg"
+theme:
+  name: "screencast"
+  wallpaper: "themes/screencast/assets/wallpaper.jpg"

@@ -195,20 +195,18 @@ class Configen::Command
   def collect_theme_names
     names = @config.available_themes
     configured = @config.settings.theme
-    unless configured.nil? || configured.to_s.strip.empty?
-      names << configured.to_s.strip
-    end
+    names << configured.to_s.strip unless configured.nil? || configured.to_s.strip.empty?
     names.uniq.sort
   end
 
   def flatten_generator_errors(errors)
     errors.each_with_object([]) do |(path, messages), list|
       Array(messages).each do |message|
-        if path == "conflicts" || path == "apply"
-          list << message
-        else
-          list << "#{path}: #{message}"
-        end
+        list << if %w[conflicts apply].include?(path)
+                  message
+                else
+                  "#{path}: #{message}"
+                end
       end
     end
   end

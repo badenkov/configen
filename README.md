@@ -68,8 +68,13 @@ templates:
 
 variables:
   font_size: 13
-  palette:
-    bg: "#000000"
+  theme:
+    default:
+      palette:
+        bg: "#000000"
+        fg: "#ffffff"
+      wallpaper: "default.jpg"
+    system: true
 
 hooks:
   before:
@@ -95,6 +100,11 @@ Rules:
 - Other files are copied as-is.
 - Directory sources are synchronized exactly: extra files in target are removed.
 - Theme is optional and overrides `variables`.
+- `variables` supports two forms:
+  - shorthand: `name: value` (equivalent to `default: value`, `system: false`);
+  - definition mapping:
+    - `default`: default value;
+    - `system` (optional, default `false`): blocks only ad-hoc `configen set/del` for that top-level variable.
 - Active theme is resolved in order:
   - `--theme` option for current command;
   - saved state file `${XDG_STATE_HOME:-~/.local/state}/configen/theme`;
@@ -104,6 +114,7 @@ Rules:
   - active theme overrides from `<themes_dir>/<theme>/theme.yaml`;
   - saved variable overrides `${XDG_STATE_HOME:-~/.local/state}/configen/variables.yaml`.
 - `configen set` always stores `VALUE` as a string (no YAML parsing of CLI value).
+- Override types are validated against the default variable value type inferred from YAML/Ruby values (`string`, `number`, `boolean`, `array`, `object`, `nil`).
 - Theme file path: `<themes_dir>/<theme>/theme.yaml` (relative to `configen.yaml`).
 - Theme file may be either plain variables mapping or `{ variables: ... }`.
 - `configen validate` checks:

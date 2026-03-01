@@ -103,6 +103,25 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal "20", cfg2.variable_value("font_size")
   end
 
+  def test_variable_definition_mapping_supports_default_and_system
+    project = @root.join("dotfiles-variable-definition")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+        leader: " "
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "#000000", cfg.variable_value("theme.palette.bg")
+    assert_equal " ", cfg.variable_value("leader")
+  end
+
   def test_set_and_get_nested_variable_override
     project = @root.join("dotfiles-variable-nested")
     project.mkpath
@@ -137,6 +156,46 @@ class Configen::ConfigTest < Minitest::Test
       cfg.set_variable_override!("palette.bg", "#000000")
     end
     assert_match(/Unknown variable path `palette\.bg`/, error.message)
+  end
+
+  def test_set_variable_override_rejects_system_variable
+    project = @root.join("dotfiles-variable-system")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.set_variable_override!("theme.palette.bg", "#111111")
+    end
+    assert_match(/Variable `theme` is system and cannot be overridden/, error.message)
+  end
+
+  def test_delete_variable_override_rejects_system_variable
+    project = @root.join("dotfiles-variable-system-del")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.delete_variable_override!("theme.palette.bg")
+    end
+    assert_match(/Variable `theme` is system and cannot be overridden/, error.message)
   end
 
   def test_delete_variable_override_restores_effective_value
@@ -184,6 +243,31 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal "20", all["font_size"]
     assert_equal "#111111", all["palette"]["bg"]
     assert_equal "#eeeeee", all["palette"]["fg"]
+  end
+
+  def test_validate_theme_overrides_reports_type_mismatch
+    project = @root.join("dotfiles-theme-override-validation")
+    project.join("themes", "broken").mkpath
+    project.join("themes", "broken", "theme.yaml").write(<<~YAML)
+      theme:
+        palette:
+          bg: "#111111"
+      font_size: "large"
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+        font_size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    errors = cfg.validate_theme_overrides("broken")
+    assert_includes errors, "Type mismatch for `font_size`: expected number, got string"
   end
 
   def test_theme_from_state_overrides_config_default_theme
