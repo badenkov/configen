@@ -110,6 +110,13 @@ class Configen::Config
     collect_override_validation_errors(@settings.variables || {}, load_variable_overrides, enforce_system: true)
   end
 
+  def variable_paths(mode: :get)
+    paths = collect_variable_paths(@settings.variables || {})
+    return paths unless %i[set del].include?(mode.to_sym)
+
+    paths.reject { |path| system_variable?(path.split(".").first) }
+  end
+
   private
 
   def build_config
@@ -556,5 +563,18 @@ class Configen::Config
 
   def deep_copy(value)
     Marshal.load(Marshal.dump(value))
+  end
+
+  def collect_variable_paths(value, prefix = nil, result = [])
+    return result unless value.is_a?(Hash)
+
+    value.each do |raw_key, child|
+      key = raw_key.to_s
+      path = prefix.nil? ? key : "#{prefix}.#{key}"
+      result << path
+      collect_variable_paths(child, path, result) if child.is_a?(Hash)
+    end
+
+    result.sort.uniq
   end
 end

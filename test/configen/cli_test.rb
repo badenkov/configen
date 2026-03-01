@@ -159,4 +159,94 @@ class Configen::CLITest < Minitest::Test
       assert_includes error.message, "Variable `theme` is system and cannot be overridden"
     end
   end
+
+  def test_completion_bash_prints_script
+    @project.join("themes", "tokyo-night").mkpath
+    @project.join("themes", "tokyo-night", "theme.yaml").write("font_size: 15\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        font_size: 12
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    with_home do
+      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+      out, _err = capture_io { cli.completion("bash") }
+
+      assert_includes out, "_configen_completion()"
+      assert_includes out, "complete -F _configen_completion configen"
+      assert_includes out, "bash zsh fish"
+      assert_includes out, "help version diff apply validate get set del theme --config -c"
+      assert_includes out, "completion-data variables --mode get"
+    end
+  end
+
+  def test_completion_zsh_prints_script
+    @project.join("configen.yaml").write("templates: {}\nvariables: {}\n")
+
+    with_home do
+      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+      out, _err = capture_io { cli.completion("zsh") }
+
+      assert_includes out, "#compdef configen"
+      assert_includes out, "compdef _configen_completion configen"
+    end
+  end
+
+  def test_completion_fish_prints_script
+    @project.join("configen.yaml").write("templates: {}\nvariables: {}\n")
+
+    with_home do
+      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+      out, _err = capture_io { cli.completion("fish") }
+
+      assert_includes out, "complete -c configen -f"
+      assert_includes out, "__fish_use_subcommand"
+      assert_includes out, "case '--config=*'"
+    end
+  end
+
+  def test_completion_rejects_unknown_shell
+    @project.join("configen.yaml").write("templates: {}\nvariables: {}\n")
+
+    with_home do
+      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+      error = assert_raises(Thor::Error) { cli.completion("tcsh") }
+      assert_includes error.message, "Unsupported shell `tcsh`"
+    end
+  end
+
+  def test_completion_data_themes_and_variables
+    @project.join("themes", "tokyo-night").mkpath
+    @project.join("themes", "tokyo-night", "theme.yaml").write("font_size: 15\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        font_size: 12
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    with_home do
+      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+      cli_set = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s, "mode" => "set" }, {})
+
+      themes_out, _err = capture_io { cli.completion_data("themes") }
+      vars_get_out, _err = capture_io { cli.completion_data("variables") }
+      vars_set_out, _err = capture_io { cli_set.completion_data("variables") }
+
+      assert_includes themes_out, "tokyo-night"
+      assert_includes vars_get_out, "theme.palette.bg"
+      refute_includes vars_set_out, "theme.palette.bg"
+      assert_includes vars_set_out, "font_size"
+    end
+  end
 end

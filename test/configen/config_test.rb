@@ -245,6 +245,34 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal "#eeeeee", all["palette"]["fg"]
   end
 
+  def test_variable_paths_for_completion_filters_system_for_set_and_del
+    project = @root.join("dotfiles-variable-paths")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        font_size: 13
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+
+    get_paths = cfg.variable_paths(mode: :get)
+    set_paths = cfg.variable_paths(mode: :set)
+    del_paths = cfg.variable_paths(mode: :del)
+
+    assert_includes get_paths, "theme.palette.bg"
+    assert_includes get_paths, "font_size"
+    refute_includes set_paths, "theme"
+    refute_includes set_paths, "theme.palette.bg"
+    assert_includes set_paths, "font_size"
+    assert_equal set_paths, del_paths
+  end
+
   def test_validate_theme_overrides_reports_type_mismatch
     project = @root.join("dotfiles-theme-override-validation")
     project.join("themes", "broken").mkpath

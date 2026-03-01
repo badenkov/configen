@@ -48,6 +48,17 @@ configen apply --theme screencast
 
 # Validate templates and themes
 configen validate
+
+# Generate shell completion scripts
+configen completion bash
+configen completion zsh
+configen completion fish
+# completion includes dynamic values (themes and variable paths for get/set/del)
+
+# Example: load completion for current shell session
+source <(configen completion bash)
+source <(configen completion zsh)
+configen completion fish | source
 ```
 
 ## How it works
