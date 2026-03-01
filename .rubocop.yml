@@ -41,12 +41,13 @@ Metrics/PerceivedComplexity:
   Enabled: false
 
 Metrics/BlockLength:
-  Exclude:
-    - "test/**/*"
-    - "*.gemspec"
+  Enabled: false
+
+Metrics/BlockNesting:
+  Enabled: false
 
 Metrics/ClassLength:
-  Max: 250
+  Enabled: false
 
 # Allow OpenStruct for MVP
 Style/OpenStructUse:

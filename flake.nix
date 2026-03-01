@@ -35,6 +35,7 @@
         shellHook = ''
           export GEM_HOME="$PWD/.devstate/bundle"
           export BUNDLE_PATH="$GEM_HOME"
+          export RUBOCOP_CACHE_ROOT="$PWD/.devstate/rubocop_cache"
           export PATH="$PWD/bin:$BUNDLE_PATH/bin:$PATH"
         '';
       };

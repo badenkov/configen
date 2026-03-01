@@ -5,119 +5,497 @@ require "test_helper"
 class Configen::ConfigTest < Minitest::Test
   def around
     Dir.mktmpdir do |dir|
-      @fake_root = Pathname.new(dir)
-      @fake_root.join("etc", "xdg", "configen").mkpath
-      @fake_root.join("home", ".config", "configen").mkpath
-      @fake_root.join("home", ".local", "state", "configen").mkpath
-
-      @fake_env = {
-        "XDG_CONFIG_DIRS" => @fake_root.join("etc", "xdg").to_s,
-        "XDG_CONFIG_HOME" => @fake_root.join("home", ".config").to_s,
-        "XDG_STATE_HOME" => @fake_root.join("home", ".local", "state").to_s,
-        "HOME" => @fake_root.join("home").to_s
+      @root = Pathname.new(dir)
+      @home = @root.join("home")
+      @home.mkpath
+      @env = {
+        "XDG_STATE_HOME" => @home.join(".local", "state").to_s
       }
-      @fake_home = @fake_root.join("home")
       super
     end
   end
 
-  def test_defaults_without_files
-    cfg = Configen::Config.new(env: {}, home: @fake_home)
+  def test_defaults_without_config
+    cfg = Configen::Config.new(env: @env, home: @home)
 
-    assert_equal [], cfg.hooks
+    assert_nil cfg.config_path
     assert_empty cfg.templates
-    assert_nil cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
+    assert_instance_of Configen::StrictOpenStruct, cfg.variables
+    assert_equal @home.join(".local", "state", "configen").to_s, cfg.state_path
   end
 
-  def test_loads_system_config
-    @fake_root.join("etc", "xdg", "configen", "config.json").write({
-      hooks: [
-        { pattern: "git/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "git/config" => "/etc/xdg/configen/template.erb"
-      },
-      themes_path: "/etc/xdg/configen/themes"
-    }.to_json)
+  def test_loads_yaml_and_resolves_template_paths_relative_to_config
+    project = @root.join("dotfiles")
+    project.join("configs", "kitty").mkpath
+    project.join("configs", "kitty", "kitty.conf.erb").write("kitty <%= value %>")
+    project.join("configs", "nvim").mkpath
+    project.join("configs", "nvim", "init.lua").write("vim.o.number = true")
 
-    cfg = Configen::Config.new(env: @fake_env, home: @fake_home)
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
+        ".config/nvim":
+          source: "configs/nvim"
+      variables:
+        value: "ok"
+    YAML
 
-    assert_equal [{ "pattern" => "git/*", "script" => "notify-send 'hi'" }], cfg.hooks
-    assert_equal({ "git/config" => Pathname.new("/etc/xdg/configen/template.erb") }, cfg.templates)
-    assert_equal "/etc/xdg/configen/themes", cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+
+    kitty = cfg.templates.fetch(".config/kitty/kitty.conf")
+    nvim = cfg.templates.fetch(".config/nvim")
+
+    assert_equal project.join("configen.yaml"), cfg.config_path
+    assert_equal project.join("configs", "kitty", "kitty.conf.erb"), kitty.source
+    assert_equal project.join("configs", "nvim"), nvim.source
+    assert_equal "ok", cfg.variables.value
   end
 
-  def test_loads_user_config
-    @fake_root.join("etc", "xdg", "configen", "config.json").write({
-      hooks: [
-        { pattern: "git/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "git/config" => "/etc/xdg/configen/template.erb"
-      },
-      themes_path: "/etc/xdg/configen/themes"
-    }.to_json)
-    @fake_root.join("home", ".config", "configen", "config.json").write({
-      hooks: [
-        { pattern: "niri/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "niri/config.kdl" => "/home/.config/configen/templates/template1.erb"
-      },
-      themes_path: "/home/.config/configen/themes"
-    }.to_json)
+  def test_theme_variables_override_base_variables
+    project = @root.join("dotfiles-theme")
+    project.join("configs", "kitty").mkpath
+    project.join("configs", "kitty", "kitty.conf.erb").write("font <%= font_size %>")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write(<<~YAML)
+      font_size: 16
+      colors:
+        bg: "#111111"
+        fg: "#eeeeee"
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
+      variables:
+        font_size: 13
+        colors:
+          bg: "#000000"
+          accent: "#ff0000"
+    YAML
 
-    cfg = Configen::Config.new(env: @fake_env, home: @fake_home)
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
 
-    assert_equal [{ "pattern" => "niri/*", "script" => "notify-send 'hi'" }], cfg.hooks
-
-    assert_equal({ "niri/config.kdl" => Pathname.new("/home/.config/configen/templates/template1.erb") }, cfg.templates)
-    assert_equal "/home/.config/configen/themes", cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
+    assert_equal 16, cfg.variables.font_size
+    assert_equal "#111111", cfg.variables.colors.bg
+    assert_equal "#eeeeee", cfg.variables.colors.fg
+    assert_equal "#ff0000", cfg.variables.colors.accent
   end
 
-  def test_overrides_config_path
-    @fake_root.join("etc", "xdg", "configen", "config.json").write({
-      hooks: [
-        { pattern: "git/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "git/config" => "/etc/xdg/configen/template.erb"
-      },
-      themes_path: "/etc/xdg/configen/themes"
-    }.to_json)
+  def test_variable_override_state_has_highest_priority
+    project = @root.join("dotfiles-variable-priority")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write(<<~YAML)
+      font_size: 16
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates: {}
+      variables:
+        font_size: 13
+    YAML
 
-    @fake_root.join("home", ".config", "configen", "config.json").write({
-      hooks: [
-        { pattern: "niri/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "niri/config.kdl" => "/home/.config/configen/templates/template1.erb"
-      },
-      themes_path: "/home/.config/configen/themes"
-    }.to_json)
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal 16, cfg.variable_value("font_size")
 
-    @fake_root.join("home", "dotfiles").mkpath
-    @fake_root.join("home", "dotfiles", "configen.json").write({
-      hooks: [
-        { pattern: "waybar/*", script: "notify-send 'hi'" }
-      ],
-      templates: {
-        "waybar/config.json" => "/home/dotfiles/templates/template1.erb"
-      },
-      themes_path: "/home/dotfiles/themes"
-    }.to_json)
+    cfg.set_variable_override!("font_size", "20")
 
-    cfg = Configen::Config.new(env: @fake_env,
-                               home: @fake_home,
-                               config: @fake_root.join("home", "dotfiles", "configen.json"))
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "20", cfg2.variable_value("font_size")
+  end
 
-    assert_equal [{ "pattern" => "waybar/*", "script" => "notify-send 'hi'" }], cfg.hooks
+  def test_variable_definition_mapping_supports_default_and_system
+    project = @root.join("dotfiles-variable-definition")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+        leader: " "
+    YAML
 
-    assert_equal({ "waybar/config.json" => Pathname.new("/home/dotfiles/templates/template1.erb") }, cfg.templates)
-    assert_equal "/home/dotfiles/themes", cfg.themes_path
-    assert_equal @fake_home.join(".local", "state", "configen").to_s, cfg.state_path.to_s
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "#000000", cfg.variable_value("theme.palette.bg")
+    assert_equal " ", cfg.variable_value("leader")
+  end
+
+  def test_set_and_get_nested_variable_override
+    project = @root.join("dotfiles-variable-nested")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        validates:
+          some_variable:
+            sub_var1: 1
+            sub_var2: 2
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    cfg.set_variable_override!("validates.some_variable.sub_var1", "newvalue")
+
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "newvalue", cfg2.variable_value("validates.some_variable.sub_var1")
+    assert_equal 2, cfg2.variable_value("validates.some_variable.sub_var2")
+  end
+
+  def test_set_variable_override_rejects_unknown_path
+    project = @root.join("dotfiles-variable-unknown")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.set_variable_override!("palette.bg", "#000000")
+    end
+    assert_match(/Unknown variable path `palette\.bg`/, error.message)
+  end
+
+  def test_set_variable_override_rejects_system_variable
+    project = @root.join("dotfiles-variable-system")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.set_variable_override!("theme.palette.bg", "#111111")
+    end
+    assert_match(/Variable `theme` is system and cannot be overridden/, error.message)
+  end
+
+  def test_delete_variable_override_rejects_system_variable
+    project = @root.join("dotfiles-variable-system-del")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.delete_variable_override!("theme.palette.bg")
+    end
+    assert_match(/Variable `theme` is system and cannot be overridden/, error.message)
+  end
+
+  def test_delete_variable_override_restores_effective_value
+    project = @root.join("dotfiles-variable-delete")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        validates:
+          some_variable:
+            sub_var1: 1
+            sub_var2: 2
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    cfg.set_variable_override!("validates.some_variable.sub_var1", "99")
+    assert_equal "99", cfg.variable_value("validates.some_variable.sub_var1")
+
+    cfg.delete_variable_override!("validates.some_variable.sub_var1")
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal 1, cfg2.variable_value("validates.some_variable.sub_var1")
+  end
+
+  def test_variable_values_returns_full_effective_mapping
+    project = @root.join("dotfiles-variable-values")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write(<<~YAML)
+      palette:
+        bg: "#111111"
+        fg: "#eeeeee"
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates: {}
+      variables:
+        font_size: 13
+        palette:
+          bg: "#000000"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    cfg.set_variable_override!("font_size", "20")
+
+    all = cfg.variable_values
+    assert_equal "20", all["font_size"]
+    assert_equal "#111111", all["palette"]["bg"]
+    assert_equal "#eeeeee", all["palette"]["fg"]
+  end
+
+  def test_variable_paths_for_completion_filters_system_for_set_and_del
+    project = @root.join("dotfiles-variable-paths")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        font_size: 13
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+
+    get_paths = cfg.variable_paths(mode: :get)
+    set_paths = cfg.variable_paths(mode: :set)
+    del_paths = cfg.variable_paths(mode: :del)
+
+    assert_includes get_paths, "theme.palette.bg"
+    assert_includes get_paths, "font_size"
+    refute_includes set_paths, "theme"
+    refute_includes set_paths, "theme.palette.bg"
+    assert_includes set_paths, "font_size"
+    assert_equal set_paths, del_paths
+  end
+
+  def test_validate_theme_overrides_reports_type_mismatch
+    project = @root.join("dotfiles-theme-override-validation")
+    project.join("themes", "broken").mkpath
+    project.join("themes", "broken", "theme.yaml").write(<<~YAML)
+      theme:
+        palette:
+          bg: "#111111"
+      font_size: "large"
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        theme:
+          default:
+            palette:
+              bg: "#000000"
+          system: true
+        font_size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    errors = cfg.validate_theme_overrides("broken")
+    assert_includes errors, "Type mismatch for `font_size`: expected number, got string"
+  end
+
+  def test_theme_from_state_overrides_config_default_theme
+    project = @root.join("dotfiles-theme-state")
+    project.join("configs").mkpath
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write("font_size: 14\n")
+    project.join("themes", "gruvbox").mkpath
+    project.join("themes", "gruvbox", "theme.yaml").write("font_size: 17\n")
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates: {}
+      variables:
+        font_size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "tokyo-night", cfg.current_theme
+    assert_equal 14, cfg.variables.font_size
+
+    cfg.set_active_theme!("gruvbox")
+
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "gruvbox", cfg2.current_theme
+    assert_equal 17, cfg2.variables.font_size
+  end
+
+  def test_missing_theme_in_state_is_ignored
+    project = @root.join("dotfiles-missing-theme-in-state")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write("font_size: 14\n")
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates: {}
+      variables:
+        font_size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    state_file = Pathname.new(cfg.state_path).join("theme")
+    state_file.dirname.mkpath
+    state_file.write("missing-theme\n")
+
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "tokyo-night", cfg2.current_theme
+    assert_equal 14, cfg2.variables.font_size
+  end
+
+  def test_theme_can_use_variables_root_key
+    project = @root.join("dotfiles-theme-variables-root")
+    project.join("configs").mkpath
+    project.join("themes", "gruvbox").mkpath
+    project.join("themes", "gruvbox", "theme.yaml").write(<<~YAML)
+      variables:
+        font_size: 15
+        theme_name: "gruvbox"
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "gruvbox"
+      templates: {}
+      variables:
+        font_size: 13
+        theme_name: "default"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal 15, cfg.variables.font_size
+    assert_equal "gruvbox", cfg.variables.theme_name
+  end
+
+  def test_directory_string_mapping_resolves_source_path
+    project = @root.join("dotfiles2")
+    project.join("configs", "nvim").mkpath
+    project.join("configs", "nvim", "init.lua").write("vim.o.number = true")
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/nvim": "configs/nvim"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    nvim = cfg.templates.fetch(".config/nvim")
+
+    assert_equal project.join("configs", "nvim"), nvim.source
+  end
+
+  def test_loads_hooks_with_changed_and_if_condition
+    project = @root.join("dotfiles-hooks")
+    project.join("configs").mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      hooks:
+        before:
+          - description: "pre-transition"
+            run: "echo before"
+            changed:
+              - ".config/niri/**"
+            if: "pgrep -x niri >/dev/null"
+        after:
+          - "echo after"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+
+    assert_equal 1, cfg.hooks[:before].size
+    assert_equal "pre-transition", cfg.hooks[:before][0].description
+    assert_equal "echo before", cfg.hooks[:before][0].run
+    assert_equal [".config/niri/**"], cfg.hooks[:before][0].changed
+    assert_equal "pgrep -x niri >/dev/null", cfg.hooks[:before][0].if_command
+
+    assert_equal 1, cfg.hooks[:after].size
+    assert_equal "echo after", cfg.hooks[:after][0].description
+    assert_equal "echo after", cfg.hooks[:after][0].run
+  end
+
+  def test_rejects_exact_option_in_template_spec
+    project = @root.join("dotfiles3")
+    project.join("configs", "nvim").mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/nvim":
+          source: "configs/nvim"
+          exact: false
+    YAML
+
+    error = assert_raises RuntimeError do
+      Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    end
+    assert_match(/does not support `exact`/, error.message)
+  end
+
+  def test_finds_configen_yaml_in_current_directory
+    project = @root.join("project")
+    project.mkpath
+    config_path = project.join("configen.yaml")
+    config_path.write("templates: {}\n")
+
+    Dir.chdir(project) do
+      cfg = Configen::Config.new(env: @env, home: @home)
+      assert_equal config_path, cfg.config_path
+    end
+  end
+
+  def test_raises_when_theme_file_is_missing
+    project = @root.join("dotfiles-missing-theme")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "missing"
+      templates: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.variables
+    end
+    assert_match(/Theme file not found/, error.message)
+  end
+
+  def test_rejects_theme_path_traversal
+    project = @root.join("dotfiles-theme-traversal")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "../outside"
+      templates: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.variables
+    end
+    assert_match(/must not include `\.\.`/, error.message)
+  end
+
+  def test_available_themes_reads_directories_with_theme_yaml
+    project = @root.join("dotfiles-available-themes")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write("font_size: 14\n")
+    project.join("themes", "gruvbox").mkpath
+    project.join("themes", "gruvbox", "theme.yaml").write("font_size: 13\n")
+    project.join("themes", "invalid").mkpath
+    project.join("themes", "invalid", "something.yaml").write("x: 1\n")
+    project.join("configen.yaml").write("templates: {}\n")
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal %w[gruvbox tokyo-night], cfg.available_themes
+  end
+
+  def test_rejects_invalid_hooks_shape
+    project = @root.join("dotfiles-invalid-hooks")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      hooks:
+        before:
+          run: "echo nope"
+    YAML
+
+    error = assert_raises RuntimeError do
+      Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    end
+
+    assert_match(/hooks\.before.*list/, error.message)
   end
 end

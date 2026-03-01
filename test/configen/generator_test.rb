@@ -5,128 +5,188 @@ require "test_helper"
 class Configen::GeneratorTest < Minitest::Test
   def around
     Dir.mktmpdir do |dir|
-      @output_dir = Pathname.new(dir)
-      @generator = Configen::Generator.new(output_path: @output_dir.to_s)
-
-      @templates = {
-        "result/example.cfg" => file_fixture("templates/template.cfg.erb").to_s,
-        "result/liquid.cfg" => file_fixture("templates/template.cfg.liquid").to_s,
-        "result_dir" => file_fixture("templates/template_dir").to_s,
-        "result1/config1" => file_fixture("templates/template1.cfg.erb").to_s,
-        "result2/config2" => file_fixture("templates/template2.cfg.erb").to_s
-      }
-
-      @generator.before pattern: "result/*" do
-        @changes << "result will be changed"
-      end
-      @generator.before pattern: "result1/*" do
-        @changes << "result1 will be changed"
-      end
-      @generator.before pattern: "result2/*" do
-        @changes << "result2 will be changed"
-      end
-      @generator.after pattern: "result/*" do
-        @changes << "result changed"
-      end
-      @generator.after pattern: "result1/*" do
-        @changes << "result1 changed"
-      end
-      @generator.after pattern: "result2/*" do
-        @changes << "result2 changed"
-      end
-
-      @variables = {
-        "greeting" => "Hello, world!",
-        "var1" => "Var 1",
-        "var2" => "Var 2"
-      }
-
-      @changes = []
+      @root = Pathname.new(dir)
+      @home = @root.join("home")
+      @home.mkpath
+      @source = @root.join("configs")
+      @source.mkpath
+      @generator = Configen::Generator.new(home_path: @home)
       super
     end
   end
 
-  def test_render
-    @generator.render(@templates, @variables)
+  def test_plan_and_apply_creates_rendered_files
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf.erb").write("font_size <%= size %>\n")
 
-    expected_path = File.join(@output_dir, "result", "example.cfg")
-    expected_content = <<~EOC
-      Template example
+    @source.join("nvim").mkpath
+    @source.join("nvim", "init.lua.erb").write("vim.g.color = '<%= color %>'\n")
+    @source.join("nvim", "lua.lua").write("print('ok')\n")
 
-      Hello, world!
-    EOC
-    content = File.read(File.join(@output_dir, "result", "example.cfg"))
-
-    assert File.exist?(expected_path)
-    assert_equal expected_content, content
-
-    assert @output_dir.join("result_dir", "file1.txt").exist?
-    assert_equal(<<~EOF, File.read(File.join(@output_dir, "result_dir", "file1.txt")))
-      File1
-
-      <%= greeting %>
-    EOF
-
-    assert @output_dir.join("result_dir", "template1.txt").exist?,
-           "Template should be rendered with filename without erb extension"
-  end
-
-  def test_render_with_errors
     templates = {
-      "result_with_error.txt" => file_fixture("templates/template_with_error.cfg.erb").to_s,
-      "result_with_error1.txt" => file_fixture("templates/template_with_error1.cfg.erb").to_s,
-      "result.txt" => file_fixture("templates/template.cfg.erb").to_s
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb")),
+      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"))
     }
-    variables = {
-      "greeting" => "Hello, world",
-      "settings" => {}
+    vars = Configen::StrictOpenStruct.new({ "size" => 14, "color" => "tokyo-night" })
+
+    plan = @generator.plan(templates, vars)
+    assert_equal [".config/kitty/kitty.conf", ".config/nvim/init.lua", ".config/nvim/lua.lua"], plan[:create]
+    assert_empty plan[:update]
+    assert_empty plan[:conflict]
+
+    assert @generator.apply(templates, vars)
+    assert_equal "font_size 14\n", @home.join(".config/kitty/kitty.conf").read
+    assert_equal "vim.g.color = 'tokyo-night'\n", @home.join(".config/nvim/init.lua").read
+  end
+
+  def test_dry_run_does_not_modify_filesystem
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf.erb").write("font_size <%= size %>\n")
+
+    templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"))
     }
+    vars = Configen::StrictOpenStruct.new({ "size" => 14 })
 
-    @generator.render(templates, variables)
+    assert @generator.apply(templates, vars, dry_run: true)
+    refute @home.join(".config/kitty/kitty.conf").exist?
+  end
 
-    refute @output_dir.join("result_with_error.txt").exist?
-    refute @output_dir.join("result.txt").exist?
+  def test_plan_marks_updates_and_conflicts
+    @source.join("app").mkpath
+    @source.join("app", "cfg.erb").write("value=<%= value %>\n")
+    @home.join(".config").mkpath
+    @home.join(".config", "app").write("not-a-dir")
 
+    templates = {
+      ".config/app/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("app", "cfg.erb"))
+    }
+    vars = Configen::StrictOpenStruct.new({ "value" => "x" })
+
+    plan = @generator.plan(templates, vars)
+    assert_equal [".config/app/cfg"], plan[:conflict]
     refute @generator.valid?
+    refute @generator.apply(templates, vars)
+  end
 
-    expected_errors = {
-      "result_with_error.txt" => ["Undefined variable `greetings` in template. Did you mean `greeting`?"],
-      "result_with_error1.txt" => ["undefined method '[]' for nil"]
+  def test_managed_directories_delete_extra_files
+    @source.join("nvim").mkpath
+    @source.join("nvim", "init.lua").write("set number\n")
+
+    target_dir = @home.join(".config", "nvim")
+    target_dir.mkpath
+    target_dir.join("init.lua").write("old\n")
+    target_dir.join("legacy.lua").write("legacy\n")
+
+    templates = {
+      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"))
     }
-    assert expected_errors, @generator.errors
+
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".config/nvim/init.lua"], plan[:update]
+    assert_equal [".config/nvim/legacy.lua"], plan[:delete]
+
+    assert @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    assert @home.join(".config/nvim/init.lua").exist?
+    refute @home.join(".config/nvim/legacy.lua").exist?
   end
 
-  def test_before_callback
-    @generator.before do
-      @changes << "Before call"
-      assert File.empty?(@output_dir)
-    end
-    @generator.render(@templates, @variables)
+  def test_conflict_when_target_is_directory_but_template_is_file
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf.erb").write("font_size 12\n")
+    @home.join(".config", "kitty", "kitty.conf").mkpath
 
-    assert_includes @changes, "Before call"
+    templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"))
+    }
+
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".config/kitty/kitty.conf"], plan[:conflict]
+    refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
   end
 
-  def test_callback_order
-    @generator.render(@templates, @variables)
+  def test_conflict_when_parent_is_file
+    @source.join("nvim").mkpath
+    @source.join("nvim", "init.lua").write("set number\n")
+    @home.join(".config").write("not-a-dir")
 
-    assert_equal "result will be changed", @changes.shift
-    assert_equal "result1 will be changed", @changes.shift
-    assert_equal "result2 will be changed", @changes.shift
-    assert_equal "result changed", @changes.shift
-    assert_equal "result1 changed", @changes.shift
-    assert_equal "result2 changed", @changes.shift
-    assert @changes.empty?
+    templates = {
+      ".config/nvim" => Configen::Config::TemplateSpec.new(source: @source.join("nvim"))
+    }
+
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".config/nvim/init.lua"], plan[:conflict]
+    refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
   end
 
-  def test_render_only_if_changed
-    @generator.render(@templates, @variables)
+  def test_symlink_conflict_without_force
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf").write("new\n")
+    @home.join(".config", "kitty").mkpath
+    File.symlink(@home.join("some-other.conf"), @home.join(".config", "kitty", "kitty.conf"))
 
-    @changes = []
-    @variables["var1"] = "New value"
-    @generator.render(@templates, @variables)
+    templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
+    }
 
-    assert_equal 2, @changes.count
-    assert_includes @changes.shift, "result1 will be changed"
-    assert_includes @changes.shift, "result1 changed"
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".config/kitty/kitty.conf"], plan[:conflict]
+    refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+  end
+
+  def test_symlink_replaced_with_force
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf").write("new\n")
+    @home.join(".config", "kitty").mkpath
+    File.symlink(@home.join("some-other.conf"), @home.join(".config", "kitty", "kitty.conf"))
+
+    templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
+    }
+
+    assert @generator.apply(templates, Configen::StrictOpenStruct.new({}), force: true)
+    path = @home.join(".config/kitty/kitty.conf")
+    assert path.file?
+    refute path.symlink?
+    assert_equal "new\n", path.read
+  end
+
+  def test_idempotent_apply
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf.erb").write("font_size <%= size %>\n")
+    templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf.erb"))
+    }
+    vars = Configen::StrictOpenStruct.new({ "size" => 12 })
+
+    assert @generator.apply(templates, vars)
+    plan = @generator.plan(templates, vars)
+    assert_empty plan[:create]
+    assert_empty plan[:update]
+    assert_empty plan[:delete]
+    assert_empty plan[:conflict]
+    assert_equal [".config/kitty/kitty.conf"], plan[:unchanged]
+  end
+
+  def test_template_render_error_blocks_apply
+    @source.join("broken").mkpath
+    @source.join("broken", "cfg.erb").write("x=<%= missing.value %>\n")
+    templates = {
+      ".config/broken/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("broken", "cfg.erb"))
+    }
+
+    refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    assert @generator.errors.key?(".config/broken/cfg")
+    refute @home.join(".config/broken/cfg").exist?
+  end
+
+  def test_missing_source_blocks_apply
+    templates = {
+      ".config/app/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("app", "missing.erb"))
+    }
+
+    refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    assert @generator.errors.key?(".config/app/cfg")
+    refute @home.join(".config/app/cfg").exist?
   end
 end
