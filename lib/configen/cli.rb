@@ -62,10 +62,53 @@ class Configen::CLI < Thor
     end
   end
 
+  desc "get [VARIABLE]", "Show effective variables or value for a variable path"
+  def get(path = nil)
+    build_env do |command, _config|
+      value = command.get_variable(path)
+      say format_variable_value(value), :green
+    rescue StandardError => e
+      raise Thor::Error, e.message
+    end
+  end
+
+  desc "set VARIABLE VALUE", "Set string variable override in state"
+  def set(path, raw_value)
+    build_env do |command, _config|
+      command.set_variable(path, raw_value)
+      say "Updated #{path}", :green
+      say format_variable_value(command.get_variable(path)), :green
+    rescue StandardError => e
+      raise Thor::Error, e.message
+    end
+  end
+
+  desc "del VARIABLE", "Delete variable override from state"
+  def del(path)
+    build_env do |command, _config|
+      command.delete_variable(path)
+      say "Deleted override #{path}", :green
+      say format_variable_value(command.get_variable(path)), :green
+    rescue StandardError => e
+      raise Thor::Error, e.message
+    end
+  end
+
   desc "theme [NAME]", "Show active theme or set active theme"
   def theme(name = nil)
     build_env do |command, config|
-      config.set_active_theme!(name) if name
+      if name
+        begin
+          config.set_active_theme!(name)
+        rescue StandardError => e
+          available = config.available_themes
+          message = e.message
+          unless available.empty?
+            message = "#{message}. Available themes: #{available.join(', ')}"
+          end
+          raise Thor::Error, message
+        end
+      end
       active = config.current_theme
 
       say "Active theme: #{active || "(none)"}", :green
@@ -90,6 +133,13 @@ class Configen::CLI < Thor
       if errors["templates"]
         say "Templates", %i[red bold]
         errors["templates"].each do |msg|
+          say "  #{msg}", :red
+        end
+      end
+
+      if errors["variables"]
+        say "Variables", %i[red bold]
+        errors["variables"].each do |msg|
           say "  #{msg}", :red
         end
       end
@@ -130,6 +180,17 @@ class Configen::CLI < Thor
       @command ||= Configen::Command.new(@config)
 
       yield @command, @config
+    end
+
+    def format_variable_value(value)
+      case value
+      when Hash, Array
+        YAML.dump(value).sub(/\A---\s*\n/, "").strip
+      when NilClass
+        "null"
+      else
+        value.to_s
+      end
     end
   end
 end

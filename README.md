@@ -32,6 +32,16 @@ configen diff
 configen theme                  # show active and available themes
 configen theme tokyo-night      # persist active theme in state for this config
 
+# Variable overrides in state
+configen get                  # show all effective variables
+configen get font_size
+configen get palette.bg
+configen set font_size 15
+configen set palette.bg "#101010"
+configen set leader "*"
+configen set validates.some_variable.sub_var1 "newvalue"
+configen del palette.bg
+
 # One-off override without persisting
 configen diff --theme screencast
 configen apply --theme screencast
@@ -89,11 +99,17 @@ Rules:
   - `--theme` option for current command;
   - saved state file `${XDG_STATE_HOME:-~/.local/state}/configen/theme`;
   - `theme` from `configen.yaml` (optional fallback).
+- Variable value priority is resolved in order:
+  - `variables` from `configen.yaml`;
+  - active theme overrides from `<themes_dir>/<theme>/theme.yaml`;
+  - saved variable overrides `${XDG_STATE_HOME:-~/.local/state}/configen/variables.yaml`.
+- `configen set` always stores `VALUE` as a string (no YAML parsing of CLI value).
 - Theme file path: `<themes_dir>/<theme>/theme.yaml` (relative to `configen.yaml`).
 - Theme file may be either plain variables mapping or `{ variables: ... }`.
 - `configen validate` checks:
   - missing variables used in ERB templates;
   - missing source template files;
+  - unknown keys in variable overrides saved in state;
   - every theme for unknown overrides (keys must exist in base `variables`).
 - Hooks are optional and support:
   - `before` and `after` phases (list of hooks);

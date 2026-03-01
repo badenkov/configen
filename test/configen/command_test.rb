@@ -91,6 +91,25 @@ class Configen::CommandTest < Minitest::Test
     end
   end
 
+  def test_apply_uses_variable_overrides_from_state
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 10
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    cfg.set_variable_override!("size", "18")
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert command.apply
+      assert_equal "font_size 18\n", @home.join(".config/kitty/kitty.conf").read
+    end
+  end
+
   def test_apply_runs_matching_hooks_and_reports_failures_without_stopping
     @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
     log_path = @root.join("hook.log")
@@ -303,6 +322,29 @@ class Configen::CommandTest < Minitest::Test
     assert command.errors.key?("themes")
     assert command.errors["themes"].key?("broken")
     assert_includes command.errors["themes"]["broken"], "Unknown override `extra` (not found in base `variables`)"
+  end
+
+  def test_validate_reports_unknown_variable_override_from_state
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+    state_file = Pathname.new(cfg.state_path).join("variables.yaml")
+    state_file.dirname.mkpath
+    state_file.write(<<~YAML)
+      unknown:
+        value: 1
+    YAML
+
+    command = Configen::Command.new(cfg)
+    refute command.validate
+    assert command.errors.key?("variables")
+    assert_includes command.errors["variables"], "Unknown override `unknown` (not found in base `variables`)"
   end
 
   def test_validate_checks_all_themes_by_default

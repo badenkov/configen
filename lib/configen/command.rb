@@ -12,6 +12,20 @@ class Configen::Command
 
   attr_reader :templates, :errors
 
+  def get_variable(path = nil, theme: nil)
+    return @config.variable_values(theme:) if path.nil?
+
+    @config.variable_value(path, theme:)
+  end
+
+  def set_variable(path, raw_value)
+    @config.set_variable_override!(path, raw_value)
+  end
+
+  def delete_variable(path)
+    @config.delete_variable_override!(path)
+  end
+
   def diff(force: false, theme: nil)
     @errors = {}
     vars = resolve_variables_for(theme)
@@ -65,6 +79,9 @@ class Configen::Command
     template_errors = validate_templates_scope
     @errors["templates"] = template_errors unless template_errors.empty?
 
+    variable_errors = @config.validate_variable_overrides
+    @errors["variables"] = variable_errors unless variable_errors.empty?
+
     theme_errors = validate_themes_scope
     @errors["themes"] = theme_errors unless theme_errors.empty?
 
@@ -89,6 +106,7 @@ class Configen::Command
   def resolve_variables_for(theme)
     theme_name = @config.current_theme(theme)
     add_selected_theme_errors(theme_name)
+    add_variable_errors(@config.validate_variable_overrides)
 
     @config.variables(theme:)
   rescue StandardError => e
@@ -133,6 +151,15 @@ class Configen::Command
   def add_general_error(message)
     @errors["general"] ||= []
     @errors["general"] << message
+  end
+
+  def add_variable_errors(messages)
+    list = Array(messages).compact
+    return if list.empty?
+
+    @errors["variables"] ||= []
+    @errors["variables"].concat(list)
+    @errors["variables"].uniq!
   end
 
   def format_plan(plan, before_hooks:, after_hooks:)

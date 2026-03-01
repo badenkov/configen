@@ -37,8 +37,34 @@ class Configen::Config
   end
 
   def variables(theme: nil)
-    merged = deep_merge_hashes(@settings.variables || {}, load_theme_variables(resolve_active_theme(theme)))
-    Configen::StrictOpenStruct.new(merged)
+    Configen::StrictOpenStruct.new(variable_values(theme:))
+  end
+
+  def variable_values(theme: nil)
+    resolved_variables_hash(theme:)
+  end
+
+  def variable_value(path, theme: nil)
+    values = variable_values(theme:)
+    keys = parse_variable_path(path)
+    fetch_nested_value!(values, keys)
+  end
+
+  def set_variable_override!(path, raw_value)
+    keys = parse_variable_path(path)
+    validate_variable_path_exists!(keys)
+    overrides = load_variable_overrides
+    assign_nested_value!(overrides, keys, normalize_override_value(raw_value))
+    save_variable_overrides(overrides)
+  end
+
+  def delete_variable_override!(path)
+    keys = parse_variable_path(path)
+    overrides = load_variable_overrides
+    removed = delete_nested_key!(overrides, keys)
+    raise "Override not found for `#{keys.join('.')}`" unless removed
+
+    save_variable_overrides(overrides)
   end
 
   def state_path
@@ -74,6 +100,10 @@ class Configen::Config
     name = normalize_theme_name(theme_name)
     theme_vars = load_theme_variables(name)
     collect_unknown_override_keys(@settings.variables || {}, theme_vars)
+  end
+
+  def validate_variable_overrides
+    collect_unknown_override_keys(@settings.variables || {}, load_variable_overrides)
   end
 
   private
@@ -260,6 +290,10 @@ class Configen::Config
     Pathname.new(state_path).join("theme")
   end
 
+  def variables_state_file
+    Pathname.new(state_path).join("variables.yaml")
+  end
+
   def normalize_theme_name(name)
     value = name.to_s.strip
     raise "Theme name cannot be empty" if value.empty?
@@ -327,5 +361,109 @@ class Configen::Config
     return hash[sym_key] if hash.key?(sym_key)
 
     :__missing__
+  end
+
+  def resolved_variables_hash(theme:)
+    base = @settings.variables || {}
+    themed = deep_merge_hashes(base, load_theme_variables(resolve_active_theme(theme)))
+    deep_merge_hashes(themed, load_variable_overrides)
+  end
+
+  def parse_variable_path(path)
+    value = path.to_s.strip
+    raise "Variable path cannot be empty" if value.empty?
+
+    keys = value.split(".")
+    if keys.any?(&:empty?)
+      raise "Invalid variable path: #{value}"
+    end
+
+    keys
+  end
+
+  def fetch_nested_value!(hash, keys)
+    keys.reduce(hash) do |current, key|
+      value = fetch_hash_key(current, key)
+      raise "Variable not found: #{keys.join('.')}" if value == :__missing__
+
+      value
+    end
+  end
+
+  def validate_variable_path_exists!(keys)
+    fetch_nested_value!(@settings.variables || {}, keys)
+  rescue StandardError
+    raise "Unknown variable path `#{keys.join('.')}` in base `variables`"
+  end
+
+  def assign_nested_value!(hash, keys, value)
+    cursor = hash
+    keys[0..-2].each do |key|
+      current = fetch_hash_key(cursor, key)
+      if current == :__missing__
+        cursor[key] = {}
+        cursor = cursor[key]
+        next
+      end
+
+      raise "Cannot assign nested value into non-object `#{key}`" unless current.is_a?(Hash)
+
+      cursor = current
+    end
+    cursor[keys[-1]] = value
+  end
+
+  def load_variable_overrides
+    return {} unless variables_state_file.file?
+
+    data = YAML.safe_load_file(variables_state_file, permitted_classes: [], aliases: false) || {}
+    raise "Variables override root must be a mapping: #{variables_state_file}" unless data.is_a?(Hash)
+
+    data
+  rescue Psych::SyntaxError => e
+    raise "Variables override parse error in #{variables_state_file}: #{e.message}"
+  end
+
+  def save_variable_overrides(overrides)
+    FileUtils.mkdir_p(variables_state_file.dirname)
+    if overrides.empty?
+      File.delete(variables_state_file) if variables_state_file.file?
+      return
+    end
+
+    File.write(variables_state_file, YAML.dump(overrides))
+  end
+
+  def normalize_override_value(raw_value)
+    raw_value.to_s
+  end
+
+  def delete_nested_key!(hash, keys)
+    cursor = hash
+    parents = []
+
+    keys[0..-2].each do |key|
+      value = fetch_hash_key(cursor, key)
+      return false unless value.is_a?(Hash)
+
+      parents << [cursor, key]
+      cursor = value
+    end
+
+    leaf_key = keys[-1]
+    return false unless cursor.is_a?(Hash) && cursor.key?(leaf_key)
+
+    cursor.delete(leaf_key)
+    prune_empty_hash_branches!(parents, cursor)
+    true
+  end
+
+  def prune_empty_hash_branches!(parents, current)
+    return unless current.is_a?(Hash) && current.empty?
+
+    parents.reverse_each do |parent_hash, key|
+      parent_hash.delete(key)
+      break unless parent_hash.empty?
+    end
   end
 end

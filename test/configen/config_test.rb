@@ -81,6 +81,111 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal "#ff0000", cfg.variables.colors.accent
   end
 
+  def test_variable_override_state_has_highest_priority
+    project = @root.join("dotfiles-variable-priority")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write(<<~YAML)
+      font_size: 16
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates: {}
+      variables:
+        font_size: 13
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal 16, cfg.variable_value("font_size")
+
+    cfg.set_variable_override!("font_size", "20")
+
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "20", cfg2.variable_value("font_size")
+  end
+
+  def test_set_and_get_nested_variable_override
+    project = @root.join("dotfiles-variable-nested")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        validates:
+          some_variable:
+            sub_var1: 1
+            sub_var2: 2
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    cfg.set_variable_override!("validates.some_variable.sub_var1", "newvalue")
+
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal "newvalue", cfg2.variable_value("validates.some_variable.sub_var1")
+    assert_equal 2, cfg2.variable_value("validates.some_variable.sub_var2")
+  end
+
+  def test_set_variable_override_rejects_unknown_path
+    project = @root.join("dotfiles-variable-unknown")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    error = assert_raises RuntimeError do
+      cfg.set_variable_override!("palette.bg", "#000000")
+    end
+    assert_match(/Unknown variable path `palette\.bg`/, error.message)
+  end
+
+  def test_delete_variable_override_restores_effective_value
+    project = @root.join("dotfiles-variable-delete")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      variables:
+        validates:
+          some_variable:
+            sub_var1: 1
+            sub_var2: 2
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    cfg.set_variable_override!("validates.some_variable.sub_var1", "99")
+    assert_equal "99", cfg.variable_value("validates.some_variable.sub_var1")
+
+    cfg.delete_variable_override!("validates.some_variable.sub_var1")
+    cfg2 = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    assert_equal 1, cfg2.variable_value("validates.some_variable.sub_var1")
+  end
+
+  def test_variable_values_returns_full_effective_mapping
+    project = @root.join("dotfiles-variable-values")
+    project.join("themes", "tokyo-night").mkpath
+    project.join("themes", "tokyo-night", "theme.yaml").write(<<~YAML)
+      palette:
+        bg: "#111111"
+        fg: "#eeeeee"
+    YAML
+    project.join("configen.yaml").write(<<~YAML)
+      theme: "tokyo-night"
+      templates: {}
+      variables:
+        font_size: 13
+        palette:
+          bg: "#000000"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    cfg.set_variable_override!("font_size", "20")
+
+    all = cfg.variable_values
+    assert_equal "20", all["font_size"]
+    assert_equal "#111111", all["palette"]["bg"]
+    assert_equal "#eeeeee", all["palette"]["fg"]
+  end
+
   def test_theme_from_state_overrides_config_default_theme
     project = @root.join("dotfiles-theme-state")
     project.join("configs").mkpath
