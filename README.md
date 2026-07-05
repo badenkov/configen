@@ -165,10 +165,21 @@ font_size <%= font_size %>
 
 Nix can be used as orchestration only:
 - install `configen`,
-- create symlink `$HOME/.config/configen -> <directory with configen.yaml from flake>` during activation,
-- run `configen apply` during activation.
+- run a systemd activation service as the target user,
+- create `/etc/configen/users/<user>/current -> <directory with configen.yaml from flake>`,
+- run `configen apply`.
+
+Example:
+
+```nix
+{
+  configen = {
+    enable = true;
+    users.badenkov.configFile = ./configen.yaml;
+  };
+}
+```
 
 Default config resolution order:
-- explicit `-c/--config`;
 - `./configen.yaml`;
-- `${XDG_CONFIG_HOME:-~/.config}/configen/configen.yaml`.
+- `/etc/configen/users/$USER/current/configen.yaml`.

@@ -14,15 +14,23 @@ class Configen::CLITest < Minitest::Test
     end
   end
 
-  def with_home
+  def with_home(chdir: nil)
     previous_home = Dir.home
     previous_state = ENV.fetch("XDG_STATE_HOME", nil)
+    previous_user = ENV.fetch("USER", nil)
     ENV["HOME"] = @home.to_s
     ENV["XDG_STATE_HOME"] = @home.join(".local", "state").to_s
-    yield
+    ENV["USER"] = "testuser"
+
+    if chdir
+      Dir.chdir(chdir) { yield }
+    else
+      yield
+    end
   ensure
     ENV["HOME"] = previous_home
     ENV["XDG_STATE_HOME"] = previous_state
+    ENV["USER"] = previous_user
   end
 
   def test_theme_with_unknown_name_raises_thor_error_without_stacktrace
@@ -33,8 +41,8 @@ class Configen::CLITest < Minitest::Test
       variables: {}
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       error = assert_raises(Thor::Error) do
         cli.theme("missing")
       end
@@ -54,8 +62,8 @@ class Configen::CLITest < Minitest::Test
             sub_var2: 2
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       _out, _err = capture_io do
         cli.set("validates.some_variable.sub_var1", "newvalue")
       end
@@ -74,8 +82,8 @@ class Configen::CLITest < Minitest::Test
         leader: " "
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       capture_io { cli.set("leader", "*") }
       out, _err = capture_io { cli.get("leader") }
 
@@ -95,8 +103,8 @@ class Configen::CLITest < Minitest::Test
           bg: "#000000"
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       out, _err = capture_io do
         cli.get
       end
@@ -114,8 +122,8 @@ class Configen::CLITest < Minitest::Test
         size: 12
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       capture_io { cli.set("size", "20") }
       out, _err = capture_io { cli.del("size") }
 
@@ -135,8 +143,8 @@ class Configen::CLITest < Minitest::Test
           system: true
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       error = assert_raises(Thor::Error) { cli.set("theme.palette.bg", "#111111") }
       assert_includes error.message, "Variable `theme` is system and cannot be overridden"
     end
@@ -153,8 +161,8 @@ class Configen::CLITest < Minitest::Test
           system: true
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       error = assert_raises(Thor::Error) { cli.del("theme.palette.bg") }
       assert_includes error.message, "Variable `theme` is system and cannot be overridden"
     end
@@ -174,14 +182,14 @@ class Configen::CLITest < Minitest::Test
           system: true
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       out, _err = capture_io { cli.completion("bash") }
 
       assert_includes out, "_configen_completion()"
       assert_includes out, "complete -F _configen_completion configen"
       assert_includes out, "bash zsh fish"
-      assert_includes out, "help version diff apply validate get set del theme --config -c"
+      assert_includes out, "help version diff apply validate get set del theme"
       assert_includes out, "completion-data variables --mode get"
     end
   end
@@ -189,8 +197,8 @@ class Configen::CLITest < Minitest::Test
   def test_completion_zsh_prints_script
     @project.join("configen.yaml").write("templates: {}\nvariables: {}\n")
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       out, _err = capture_io { cli.completion("zsh") }
 
       assert_includes out, "#compdef configen"
@@ -201,21 +209,21 @@ class Configen::CLITest < Minitest::Test
   def test_completion_fish_prints_script
     @project.join("configen.yaml").write("templates: {}\nvariables: {}\n")
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       out, _err = capture_io { cli.completion("fish") }
 
       assert_includes out, "complete -c configen -f"
       assert_includes out, "__fish_use_subcommand"
-      assert_includes out, "case '--config=*'"
+      refute_includes out, "--config"
     end
   end
 
   def test_completion_rejects_unknown_shell
     @project.join("configen.yaml").write("templates: {}\nvariables: {}\n")
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
       error = assert_raises(Thor::Error) { cli.completion("tcsh") }
       assert_includes error.message, "Unsupported shell `tcsh`"
     end
@@ -235,9 +243,9 @@ class Configen::CLITest < Minitest::Test
           system: true
     YAML
 
-    with_home do
-      cli = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s }, {})
-      cli_set = Configen::CLI.new([], { "config" => @project.join("configen.yaml").to_s, "mode" => "set" }, {})
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
+      cli_set = Configen::CLI.new([], { "mode" => "set" }, {})
 
       themes_out, _err = capture_io { cli.completion_data("themes") }
       vars_get_out, _err = capture_io { cli.completion_data("variables") }
@@ -249,4 +257,5 @@ class Configen::CLITest < Minitest::Test
       assert_includes vars_set_out, "font_size"
     end
   end
+
 end

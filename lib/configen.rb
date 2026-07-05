@@ -10,6 +10,7 @@ require "ostruct"
 require "thor"
 require "yaml"
 require "fileutils"
+require "etc"
 
 require_relative "configen/version"
 require_relative "configen/strict_open_struct"

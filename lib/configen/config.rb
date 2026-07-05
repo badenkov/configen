@@ -15,15 +15,17 @@ class Configen::Config
       Pathname.new(env["XDG_STATE_HOME"] || File.join(home, ".local", "state")).join("configen").to_s
     }
   }.freeze
+  SYSTEM_CONFIG_ROOT = "/etc/configen"
 
   TemplateSpec = Struct.new(:source, keyword_init: true)
   HookSpec = Struct.new(:description, :run, :changed, :if_command, keyword_init: true)
 
   attr_reader :settings, :config_path
 
-  def initialize(env: ENV, home: Dir.home, config: nil)
+  def initialize(env: ENV, home: Dir.home, config: nil, system_config_root: SYSTEM_CONFIG_ROOT)
     @env = env
     @home = home
+    @system_config_root = system_config_root
     @config_path = resolve_config_path(config)
 
     @settings = OpenStruct.new(build_config)
@@ -249,15 +251,21 @@ class Configen::Config
     cwd_candidate = Pathname.new(Dir.pwd).join("configen.yaml")
     return cwd_candidate if cwd_candidate.file?
 
-    default_candidate = default_config_path
-    return default_candidate if default_candidate.file?
+    system_candidate = system_config_path
+    return system_candidate if system_candidate&.file?
 
     nil
   end
 
-  def default_config_path
-    config_home = @env["XDG_CONFIG_HOME"] || File.join(@home, ".config")
-    Pathname.new(config_home).join("configen", "configen.yaml")
+  def system_config_path
+    user = current_user_name
+    return nil if user.nil? || user.empty?
+
+    Pathname.new(@system_config_root).join("users", user, "current", "configen.yaml")
+  end
+
+  def current_user_name
+    @env["USER"] || @env["LOGNAME"] || Etc.getpwuid(Process.uid).name
   end
 
   def resolve_active_theme(theme_override = nil)

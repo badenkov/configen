@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 class Configen::CLI < Thor
-  class_option :config, type: :string, aliases: "-c"
-
   desc "version", "Version"
   def version
     build_env do |_command, config|
@@ -200,14 +198,10 @@ class Configen::CLI < Thor
     end
 
     def build_env
-      if options["config"] && !File.file?(options["config"])
-        raise Thor::Error, "File #{options["config"]} doesn't exist"
-      end
-
-      @config ||= Configen::Config.new(config: options["config"])
+      @config ||= Configen::Config.new
       unless @config.config_path
         raise Thor::Error,
-              "Config file not found. Pass -c /path/to/configen.yaml or run from a directory containing configen.yaml."
+              "Config file not found. Create ./configen.yaml or set up /etc/configen/users/$USER/current/configen.yaml."
       end
 
       @command ||= Configen::Command.new(@config)
@@ -275,27 +269,6 @@ class Configen::CLI < Thor
       end.join
 
       <<~BASH
-        _configen_completion_config_value() {
-          local i=1
-          local value=""
-          while [[ $i -lt $COMP_CWORD ]]; do
-            case "${COMP_WORDS[$i]}" in
-              -c|--config)
-                if [[ $((i + 1)) -lt ${#COMP_WORDS[@]} ]]; then
-                  value="${COMP_WORDS[$((i + 1))]}"
-                fi
-                i=$((i + 2))
-                continue
-                ;;
-              --config=*)
-                value="${COMP_WORDS[$i]#--config=}"
-                ;;
-            esac
-            i=$((i + 1))
-          done
-          printf '%s' "$value"
-        }
-
         _configen_completion_positional_index() {
           local cmd_index="$1"
           local index=0
@@ -308,11 +281,11 @@ class Configen::CLI < Thor
               continue
             fi
             case "$word" in
-              -c|--config|--theme)
+              --theme)
                 expect_value=1
                 continue
                 ;;
-              --config=*|--theme=*)
+              --theme=*)
                 continue
                 ;;
             esac
@@ -344,18 +317,9 @@ class Configen::CLI < Thor
             return
           fi
 
-          local config_value
-          config_value="$(_configen_completion_config_value)"
-          local -a config_args
-          if [[ -n "$config_value" ]]; then
-            config_args=(--config "$config_value")
-          else
-            config_args=()
-          fi
-
           if [[ "$cmd" == "theme" && "$cur" != -* ]]; then
             local themes
-            themes="$(configen "${config_args[@]}" completion-data themes 2>/dev/null)"
+            themes="$(configen completion-data themes 2>/dev/null)"
             COMPREPLY=( $(compgen -W "$themes #{shell_words(global_options)}" -- "$cur") )
             return
           fi
@@ -372,7 +336,7 @@ class Configen::CLI < Thor
               get)
                 if [[ "$positional_index" == "0" ]]; then
                   local vars
-                  vars="$(configen "${config_args[@]}" completion-data variables --mode get 2>/dev/null)"
+                  vars="$(configen completion-data variables --mode get 2>/dev/null)"
                   COMPREPLY=( $(compgen -W "$vars #{shell_words(global_options)}" -- "$cur") )
                   return
                 fi
@@ -380,7 +344,7 @@ class Configen::CLI < Thor
               set)
                 if [[ "$positional_index" == "0" ]]; then
                   local vars
-                  vars="$(configen "${config_args[@]}" completion-data variables --mode set 2>/dev/null)"
+                  vars="$(configen completion-data variables --mode set 2>/dev/null)"
                   COMPREPLY=( $(compgen -W "$vars #{shell_words(global_options)}" -- "$cur") )
                   return
                 fi
@@ -388,7 +352,7 @@ class Configen::CLI < Thor
               del)
                 if [[ "$positional_index" == "0" ]]; then
                   local vars
-                  vars="$(configen "${config_args[@]}" completion-data variables --mode del 2>/dev/null)"
+                  vars="$(configen completion-data variables --mode del 2>/dev/null)"
                   COMPREPLY=( $(compgen -W "$vars #{shell_words(global_options)}" -- "$cur") )
                   return
                 fi
@@ -420,25 +384,6 @@ class Configen::CLI < Thor
       <<~ZSH
         #compdef configen
 
-        _configen_completion_config_value() {
-          local value=""
-          local i
-          for ((i = 1; i < CURRENT; i++)); do
-            case "${words[i]}" in
-              -c|--config)
-                if (( i + 1 <= ${#words} )); then
-                  value="${words[i + 1]}"
-                fi
-                i=$((i + 1))
-                ;;
-              --config=*)
-                value="${words[i]#--config=}"
-                ;;
-            esac
-          done
-          print -r -- "$value"
-        }
-
         _configen_completion_positional_index() {
           local cmd_index="$1"
           local index=0
@@ -451,11 +396,11 @@ class Configen::CLI < Thor
               continue
             fi
             case "$word" in
-              -c|--config|--theme)
+              --theme)
                 expect_value=1
                 continue
                 ;;
-              --config=*|--theme=*)
+              --theme=*)
                 continue
                 ;;
             esac
@@ -497,17 +442,8 @@ class Configen::CLI < Thor
                 return
               fi
 
-              local config_value
-              config_value="$(_configen_completion_config_value)"
-              local -a config_args
-              if [[ -n "$config_value" ]]; then
-                config_args=(--config "$config_value")
-              else
-                config_args=()
-              fi
-
               if [[ "$cmd" == "theme" && CURRENT -eq 3 ]]; then
-                themes=(${(f)"$(configen ${config_args[@]} completion-data themes 2>/dev/null)"})
+                themes=(${(f)"$(configen completion-data themes 2>/dev/null)"})
                 _describe 'themes' themes
                 return
               fi
@@ -523,21 +459,21 @@ class Configen::CLI < Thor
                 case "$cmd" in
                   get)
                     if [[ "$positional_index" == "0" ]]; then
-                      vars=(${(f)"$(configen ${config_args[@]} completion-data variables --mode get 2>/dev/null)"})
+                      vars=(${(f)"$(configen completion-data variables --mode get 2>/dev/null)"})
                       _describe 'variables' vars
                       return
                     fi
                     ;;
                   set)
                     if [[ "$positional_index" == "0" ]]; then
-                      vars=(${(f)"$(configen ${config_args[@]} completion-data variables --mode set 2>/dev/null)"})
+                      vars=(${(f)"$(configen completion-data variables --mode set 2>/dev/null)"})
                       _describe 'variables' vars
                       return
                     fi
                     ;;
                   del)
                     if [[ "$positional_index" == "0" ]]; then
-                      vars=(${(f)"$(configen ${config_args[@]} completion-data variables --mode del 2>/dev/null)"})
+                      vars=(${(f)"$(configen completion-data variables --mode del 2>/dev/null)"})
                       _describe 'variables' vars
                       return
                     fi
@@ -571,50 +507,19 @@ class Configen::CLI < Thor
       end.join("\n")
 
       <<~FISH
-        function __fish_configen_config_value
-          set -l tokens (commandline -opc)
-          set -l value
-          for i in (seq (count $tokens))
-            set -l token $tokens[$i]
-            switch $token
-              case -c --config
-                set -l j (math "$i + 1")
-                if test $j -le (count $tokens)
-                  set value $tokens[$j]
-                end
-              case '--config=*'
-                set value (string replace -r '^--config=' '' -- $token)
-            end
-          end
-          echo $value
-        end
-
         function __fish_configen_themes
-          set -l cfg (__fish_configen_config_value)
-          if test -n "$cfg"
-            configen --config "$cfg" completion-data themes 2>/dev/null
-          else
-            configen completion-data themes 2>/dev/null
-          end
+          configen completion-data themes 2>/dev/null
         end
 
         function __fish_configen_variables
           set -l mode $argv[1]
-          set -l cfg (__fish_configen_config_value)
-          if test -n "$cfg"
-            configen --config "$cfg" completion-data variables --mode "$mode" 2>/dev/null
-          else
-            configen completion-data variables --mode "$mode" 2>/dev/null
-          end
+          configen completion-data variables --mode "$mode" 2>/dev/null
         end
 
         complete -c configen -f
         #{command_entries}
 
         # Global options
-        complete -c configen -s c -l config -r
-
-        # Command options
         #{option_entries}
 
         # Dynamic theme names

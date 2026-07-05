@@ -13,7 +13,7 @@
 - Playground for manual checks: `playground/`.
 
 ## Config Model
-- Primary config file: `configen.yaml` (passed with `-c/--config` or auto-discovered in cwd).
+- Primary config file: `configen.yaml` (auto-discovered in cwd, then in `/etc/configen/users/$USER/current`).
 - Templates live under `configs/` (relative to config file).
 - Themes are directories under `themes_dir`, each with `theme.yaml`.
 - Active theme is dynamic (set by `configen theme <name>`) and stored in XDG state.

@@ -8,8 +8,10 @@ class Configen::ConfigTest < Minitest::Test
       @root = Pathname.new(dir)
       @home = @root.join("home")
       @home.mkpath
+      @system_config_root = @root.join("etc", "configen")
       @env = {
-        "XDG_STATE_HOME" => @home.join(".local", "state").to_s
+        "XDG_STATE_HOME" => @home.join(".local", "state").to_s,
+        "USER" => "testuser"
       }
       super
     end
@@ -426,12 +428,12 @@ class Configen::ConfigTest < Minitest::Test
     assert_match(/does not support `exact`/, error.message)
   end
 
-  def test_finds_configen_yaml_in_default_config_directory
-    config_path = @home.join(".config", "configen", "configen.yaml")
+  def test_finds_configen_yaml_in_system_config_directory
+    config_path = @system_config_root.join("users", "testuser", "current", "configen.yaml")
     config_path.dirname.mkpath
     config_path.write("templates: {}\n")
 
-    cfg = Configen::Config.new(env: @env, home: @home)
+    cfg = Configen::Config.new(env: @env, home: @home, system_config_root: @system_config_root)
     assert_equal config_path, cfg.config_path
   end
 
@@ -440,9 +442,12 @@ class Configen::ConfigTest < Minitest::Test
     project.mkpath
     config_path = project.join("configen.yaml")
     config_path.write("templates: {}\n")
+    system_config_path = @system_config_root.join("users", "testuser", "current", "configen.yaml")
+    system_config_path.dirname.mkpath
+    system_config_path.write("templates: {}\n")
 
     Dir.chdir(project) do
-      cfg = Configen::Config.new(env: @env, home: @home)
+      cfg = Configen::Config.new(env: @env, home: @home, system_config_root: @system_config_root)
       assert_equal config_path, cfg.config_path
     end
   end
