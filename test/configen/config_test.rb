@@ -54,6 +54,40 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal "ok", cfg.variables.value
   end
 
+  def test_loads_template_mode_from_mapping
+    project = @root.join("dotfiles-template-mode")
+    project.join("configs", "ssh").mkpath
+    project.join("configs", "ssh", "config.erb").write("Host *\n")
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".ssh/config":
+          source: "configs/ssh/config.erb"
+          mode: "600"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    spec = cfg.templates.fetch(".ssh/config")
+
+    assert_equal project.join("configs", "ssh", "config.erb"), spec.source
+    assert_equal 0o600, spec.mode
+  end
+
+  def test_rejects_invalid_template_mode
+    project = @root.join("dotfiles-template-mode-invalid")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".ssh/config":
+          source: "configs/ssh/config.erb"
+          mode: "rw-------"
+    YAML
+
+    error = assert_raises RuntimeError do
+      Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    end
+    assert_match(/Template mode must be an octal string/, error.message)
+  end
+
   def test_loads_seed_paths_relative_to_config
     project = @root.join("dotfiles-seeds")
     project.join("configs", "qbittorrent").mkpath

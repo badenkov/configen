@@ -18,7 +18,7 @@ class Configen::Config
   }.freeze
   SYSTEM_CONFIG_ROOT = "/etc/configen"
 
-  TemplateSpec = Struct.new(:source, keyword_init: true)
+  TemplateSpec = Struct.new(:source, :mode, keyword_init: true)
   SeedSpec = Struct.new(:source, :source_display, keyword_init: true)
   HookSpec = Struct.new(:description, :run, :changed, :if_command, keyword_init: true)
 
@@ -172,7 +172,7 @@ class Configen::Config
     templates = raw_templates.each_with_object({}) do |(target, raw_spec), result|
       spec = normalize_template_spec(raw_spec)
       source_path = Pathname.new(base_dir).join(spec.fetch("source")).expand_path
-      result[target.to_s] = TemplateSpec.new(source: source_path)
+      result[target.to_s] = TemplateSpec.new(source: source_path, mode: spec["mode"])
     end
     raw_seeds = data["seeds"] || {}
     raise "`seeds` must be a mapping" unless raw_seeds.is_a?(Hash)
@@ -205,7 +205,7 @@ class Configen::Config
   def normalize_template_spec(raw_spec)
     case raw_spec
     when String
-      { "source" => raw_spec }
+      { "source" => raw_spec, "mode" => nil }
     when Hash
       source = raw_spec["source"] || raw_spec[:source]
       raise "Template spec must include `source`" if source.nil?
@@ -213,10 +213,20 @@ class Configen::Config
         raise "Template spec does not support `exact`; directory mappings are always exact"
       end
 
-      { "source" => source.to_s }
+      { "source" => source.to_s, "mode" => normalize_mode(raw_spec["mode"] || raw_spec[:mode]) }
     else
       raise "Template spec must be a string or mapping, got #{raw_spec.class}"
     end
+  end
+
+  def normalize_mode(raw_mode)
+    return nil if raw_mode.nil?
+    raise "Template mode must be an octal string" unless raw_mode.is_a?(String)
+
+    mode = raw_mode.strip
+    raise "Template mode must be an octal string" unless mode.match?(/\A[0-7]{3,4}\z/)
+
+    mode.to_i(8)
   end
 
   def normalize_seed_source(raw_source)

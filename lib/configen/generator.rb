@@ -2,8 +2,11 @@
 
 require "find"
 require "digest"
+require "tempfile"
 
 class Configen::Generator
+  DesiredFile = Struct.new(:content, :mode, keyword_init: true)
+
   attr_reader :errors, :last_plan, :last_seed_plan, :last_pull_plan
 
   def initialize(home_path:, manifest_path: nil)
@@ -114,17 +117,17 @@ class Configen::Generator
         source.glob("**/*", File::FNM_DOTMATCH).select(&:file?).each do |src|
           rel = src.relative_path_from(source).to_s
           dst = File.join(target_rel, strip_template_ext(rel))
-          render_into_desired!(desired, dst, src.to_s, variables)
+          render_into_desired!(desired, dst, src.to_s, variables, mode: desired_mode(src, spec.mode))
         end
       else
-        render_into_desired!(desired, target_rel, source.to_s, variables)
+        render_into_desired!(desired, target_rel, source.to_s, variables, mode: desired_mode(source, spec.mode))
       end
     end
 
     [desired, managed_dir_roots]
   end
 
-  def render_into_desired!(desired, target_rel, source_path, variables)
+  def render_into_desired!(desired, target_rel, source_path, variables, mode:)
     result = render_template(source_path, variables)
     if result[:content].nil?
       @errors[target_rel] ||= []
@@ -132,7 +135,7 @@ class Configen::Generator
       return
     end
 
-    desired[target_rel] = result[:content]
+    desired[target_rel] = DesiredFile.new(content: result[:content], mode: mode)
   end
 
   def build_plan(desired, managed_dir_roots, force:)
@@ -145,7 +148,7 @@ class Configen::Generator
       unchanged: []
     }
 
-    desired.each do |rel, content|
+    desired.each do |rel, file|
       dst = @home_path.join(rel)
       if ancestor_is_file?(dst)
         plan[:conflict] << rel
@@ -170,9 +173,9 @@ class Configen::Generator
             next
           end
 
-          if File.exist?(dst)
+          if File.file?(dst)
             current = File.read(dst)
-            if current == content
+            if current == file.content && file_mode_matches?(dst, file.mode) && !File.symlink?(dst)
               plan[:unchanged] << rel
             else
               plan[:update] << rel
@@ -182,7 +185,7 @@ class Configen::Generator
           end
         elsif File.file?(dst)
           current = File.read(dst)
-          if current == content
+          if current == file.content && file_mode_matches?(dst, file.mode)
             plan[:unchanged] << rel
           else
             plan[:update] << rel
@@ -253,7 +256,7 @@ class Configen::Generator
         next
       end
 
-      plan[:desired][rel] = source.read
+      plan[:desired][rel] = DesiredFile.new(content: source.read, mode: desired_mode(source, nil))
       plan[:seed] << rel
     end
 
@@ -419,7 +422,8 @@ class Configen::Generator
       end
 
       FileUtils.mkdir_p(dst.dirname)
-      File.write(dst, @last_plan[:desired][rel])
+      desired = @last_plan[:desired].fetch(rel)
+      atomic_write(dst, desired.content, desired.mode)
     end
   end
 
@@ -429,7 +433,8 @@ class Configen::Generator
       next if File.exist?(dst) || File.symlink?(dst)
 
       FileUtils.mkdir_p(dst.dirname)
-      File.write(dst, @last_seed_plan[:desired][rel])
+      desired = @last_seed_plan[:desired].fetch(rel)
+      atomic_write(dst, desired.content, desired.mode)
     end
   end
 
@@ -495,8 +500,8 @@ class Configen::Generator
     return if @manifest_path.nil?
     return unless @errors.empty?
 
-    files = @last_plan[:desired].transform_values do |content|
-      { "sha256" => Digest::SHA256.hexdigest(content) }
+    files = @last_plan[:desired].transform_values do |file|
+      { "sha256" => Digest::SHA256.hexdigest(file.content) }
     end
 
     data = {
@@ -506,5 +511,38 @@ class Configen::Generator
 
     FileUtils.mkdir_p(@manifest_path.dirname)
     File.write(@manifest_path, YAML.dump(data))
+  end
+
+  def desired_mode(source, explicit_mode)
+    return explicit_mode unless explicit_mode.nil?
+
+    executable?(source) ? 0o755 : 0o644
+  end
+
+  def executable?(path)
+    path.stat.executable?
+  rescue Errno::ENOENT
+    false
+  end
+
+  def file_mode_matches?(path, mode)
+    (path.stat.mode & 0o7777) == mode
+  end
+
+  def atomic_write(path, content, mode)
+    tmp_path = nil
+    Tempfile.create([".configen-", ".tmp"], path.dirname.to_s) do |tmp|
+      tmp_path = tmp.path
+      tmp.binmode
+      tmp.write(content)
+      tmp.flush
+      tmp.fsync
+      File.chmod(mode, tmp.path)
+      tmp.close
+      File.rename(tmp_path, path)
+      tmp_path = nil
+    end
+  ensure
+    FileUtils.rm_f(tmp_path) if tmp_path && File.exist?(tmp_path)
   end
 end

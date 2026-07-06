@@ -78,6 +78,9 @@ templates:
   ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
   ".config/nvim":
     source: "configs/nvim"
+  ".ssh/config":
+    source: "configs/ssh/config.erb"
+    mode: "600"
 
 seeds:
   ".config/qbittorrent/qBittorrent.conf": "configs/qbittorrent/qBittorrent.conf"
@@ -111,7 +114,10 @@ Rules:
 - `templates` key is target path relative to `$HOME`.
 - Template value can be:
   - string path to source file/dir relative to `configen.yaml`;
-  - mapping with `source`.
+  - mapping with `source` and optional `mode`.
+- `mode` is an octal string, for example `"600"` or `"755"`. For directory sources it applies to every produced file.
+- Without explicit `mode`, generated files use `0644`, or `0755` when the source file is executable.
+- `diff` reports files with matching content but wrong mode as `UPDATE`.
 - `.erb` files are rendered.
 - Other files are copied as-is.
 - Directory sources are synchronized exactly: extra files in target are removed.

@@ -169,6 +169,36 @@ class Configen::GeneratorTest < Minitest::Test
     assert_equal [".config/kitty/kitty.conf"], plan[:unchanged]
   end
 
+  def test_apply_sets_explicit_mode_and_repairs_mode_drift
+    @source.join("ssh").mkpath
+    @source.join("ssh", "config.erb").write("Host *\n")
+    templates = {
+      ".ssh/config" => Configen::Config::TemplateSpec.new(source: @source.join("ssh", "config.erb"), mode: 0o600)
+    }
+
+    assert @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    path = @home.join(".ssh/config")
+    assert_equal 0o600, File.stat(path).mode & 0o7777
+
+    File.chmod(0o644, path)
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".ssh/config"], plan[:update]
+    assert @generator.apply_from_plan
+    assert_equal 0o600, File.stat(path).mode & 0o7777
+  end
+
+  def test_default_mode_inherits_source_executable_bit
+    source_file = @source.join("theme.sh.erb")
+    source_file.write("#!/bin/sh\necho theme\n")
+    File.chmod(0o755, source_file)
+    templates = {
+      ".config/theme.sh" => Configen::Config::TemplateSpec.new(source: source_file)
+    }
+
+    assert @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    assert_equal 0o755, File.stat(@home.join(".config/theme.sh")).mode & 0o7777
+  end
+
   def test_template_render_error_blocks_apply
     @source.join("broken").mkpath
     @source.join("broken", "cfg.erb").write("x=<%= missing.value %>\n")
@@ -194,6 +224,7 @@ class Configen::GeneratorTest < Minitest::Test
   def test_seeds_are_written_only_when_target_is_missing
     @source.join("qbittorrent").mkpath
     @source.join("qbittorrent", "qBittorrent.conf").write("seed\n")
+    File.chmod(0o755, @source.join("qbittorrent", "qBittorrent.conf"))
     @home.join(".config", "existing").mkpath
     @home.join(".config", "existing", "app.conf").write("user-owned\n")
 
@@ -214,6 +245,7 @@ class Configen::GeneratorTest < Minitest::Test
 
     assert @generator.apply_seeds_from_plan
     assert_equal "seed\n", @home.join(".config/qbittorrent/qBittorrent.conf").read
+    assert_equal 0o755, File.stat(@home.join(".config/qbittorrent/qBittorrent.conf")).mode & 0o7777
     assert_equal "user-owned\n", @home.join(".config/existing/app.conf").read
     refute @manifest.exist?
   end
