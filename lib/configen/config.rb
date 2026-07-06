@@ -3,6 +3,7 @@
 class Configen::Config
   DEFAULTS = {
     templates: {},
+    seeds: {},
     variables: {},
     variable_definitions: {},
     themes_dir: "themes",
@@ -18,6 +19,7 @@ class Configen::Config
   SYSTEM_CONFIG_ROOT = "/etc/configen"
 
   TemplateSpec = Struct.new(:source, keyword_init: true)
+  SeedSpec = Struct.new(:source, :source_display, keyword_init: true)
   HookSpec = Struct.new(:description, :run, :changed, :if_command, keyword_init: true)
 
   attr_reader :settings, :config_path
@@ -33,6 +35,10 @@ class Configen::Config
 
   def templates
     @settings.templates
+  end
+
+  def seeds
+    @settings.seeds
   end
 
   def hooks
@@ -112,6 +118,16 @@ class Configen::Config
     collect_override_validation_errors(@settings.variables || {}, load_variable_overrides, enforce_system: true)
   end
 
+  def validate_seeds
+    errors = []
+    @settings.seeds.each do |target, spec|
+      errors << "#{target}: source file not found: #{spec.source}" unless spec.source.file?
+      errors << "#{target}: seed source must not be an ERB template: #{spec.source}" if spec.source.extname == ".erb"
+      errors << "#{target}: seed target collides with template target" if seed_template_collision?(target)
+    end
+    errors
+  end
+
   def variable_paths(mode: :get)
     paths = collect_variable_paths(@settings.variables || {})
     return paths unless %i[set del].include?(mode.to_sym)
@@ -150,10 +166,21 @@ class Configen::Config
   end
 
   def normalize_values(data, base_dir:)
-    templates = (data["templates"] || {}).each_with_object({}) do |(target, raw_spec), result|
+    raw_templates = data["templates"] || {}
+    raise "`templates` must be a mapping" unless raw_templates.is_a?(Hash)
+
+    templates = raw_templates.each_with_object({}) do |(target, raw_spec), result|
       spec = normalize_template_spec(raw_spec)
       source_path = Pathname.new(base_dir).join(spec.fetch("source")).expand_path
       result[target.to_s] = TemplateSpec.new(source: source_path)
+    end
+    raw_seeds = data["seeds"] || {}
+    raise "`seeds` must be a mapping" unless raw_seeds.is_a?(Hash)
+
+    seeds = raw_seeds.each_with_object({}) do |(target, raw_source), result|
+      source = normalize_seed_source(raw_source)
+      source_path = Pathname.new(base_dir).join(source).expand_path
+      result[target.to_s] = SeedSpec.new(source: source_path, source_display: source)
     end
     raw_variables = data["variables"] || {}
     raise "`variables` must be a mapping" unless raw_variables.is_a?(Hash)
@@ -166,6 +193,7 @@ class Configen::Config
 
     {
       templates: templates,
+      seeds: seeds,
       variables: base_variables,
       variable_definitions: variable_definitions,
       hooks: normalize_hooks(data["hooks"] || {}),
@@ -188,6 +216,20 @@ class Configen::Config
       { "source" => source.to_s }
     else
       raise "Template spec must be a string or mapping, got #{raw_spec.class}"
+    end
+  end
+
+  def normalize_seed_source(raw_source)
+    raise "Seed source must be a string path, got #{raw_source.class}" unless raw_source.is_a?(String)
+    raise "Seed source cannot be empty" if raw_source.strip.empty?
+    raise "Seed source must be a plain file, not an ERB template: #{raw_source}" if File.extname(raw_source) == ".erb"
+
+    raw_source
+  end
+
+  def seed_template_collision?(seed_target)
+    @settings.templates.any? do |template_target, spec|
+      seed_target == template_target || (spec.source.directory? && seed_target.start_with?("#{template_target}/"))
     end
   end
 

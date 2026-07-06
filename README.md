@@ -17,6 +17,7 @@ nix build .#configen
 # Use config from current directory (./configen.yaml)
 configen diff
 configen apply
+configen pull
 
 # Or pass config explicitly
 configen diff -c ~/dotfiles/configen.yaml
@@ -24,6 +25,7 @@ configen apply -c ~/dotfiles/configen.yaml
 
 # Dry run
 configen apply --dry-run
+configen pull --dry-run
 
 # Diff includes hooks that would run for this change set
 configen diff
@@ -77,6 +79,9 @@ templates:
   ".config/nvim":
     source: "configs/nvim"
 
+seeds:
+  ".config/qbittorrent/qBittorrent.conf": "configs/qbittorrent/qBittorrent.conf"
+
 variables:
   font_size: 13
   theme:
@@ -110,6 +115,11 @@ Rules:
 - `.erb` files are rendered.
 - Other files are copied as-is.
 - Directory sources are synchronized exactly: extra files in target are removed.
+- `seeds` key is target path relative to `$HOME`, and value is a plain source file relative to `configen.yaml`.
+- Seed sources cannot be `.erb` files.
+- `apply` writes a seed only when the target does not exist. Existing seed targets are never updated or reported as drift.
+- `diff` reports pending seed writes as `SEED` lines.
+- `pull` copies changed seed target content from `$HOME` back to the source file, so `git diff` shows app-owned config changes.
 - Theme is optional and overrides `variables`.
 - `variables` supports two forms:
   - shorthand: `name: value` (equivalent to `default: value`, `system: false`);
@@ -125,6 +135,7 @@ Rules:
   - active theme overrides from `<themes_dir>/<theme>/theme.yaml`;
   - saved variable overrides `${XDG_STATE_HOME:-~/.local/state}/configen/variables.yaml`.
 - Successful `apply` stores rendered files manifest in `${XDG_STATE_HOME:-~/.local/state}/configen/rendered.yaml`.
+- Seeds are not stored in the manifest and are not pruned.
 - If a template target is removed/renamed, stale files from previous manifest are pruned automatically.
 - Stale file is deleted only when its current content hash matches the last rendered hash (manual edits are reported as conflict and preserved).
 - `configen set` always stores `VALUE` as a string (no YAML parsing of CLI value).
@@ -134,6 +145,7 @@ Rules:
 - `configen validate` checks:
   - missing variables used in ERB templates;
   - missing source template files;
+  - missing seed source files and seed/template target collisions;
   - unknown keys in variable overrides saved in state;
   - every theme for unknown overrides (keys must exist in base `variables`).
 - Hooks are optional and support:

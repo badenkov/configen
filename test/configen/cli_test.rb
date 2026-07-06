@@ -14,7 +14,7 @@ class Configen::CLITest < Minitest::Test
     end
   end
 
-  def with_home(chdir: nil)
+  def with_home(chdir: nil, &block)
     previous_home = Dir.home
     previous_state = ENV.fetch("XDG_STATE_HOME", nil)
     previous_user = ENV.fetch("USER", nil)
@@ -23,9 +23,9 @@ class Configen::CLITest < Minitest::Test
     ENV["USER"] = "testuser"
 
     if chdir
-      Dir.chdir(chdir) { yield }
+      Dir.chdir(chdir, &block)
     else
-      yield
+      block.call
     end
   ensure
     ENV["HOME"] = previous_home
@@ -132,6 +132,29 @@ class Configen::CLITest < Minitest::Test
     end
   end
 
+  def test_pull_dry_run_prints_seed_paths_without_copying
+    @project.join("configs").mkpath
+    source = @project.join("configs", "app.conf")
+    source.write("repo\n")
+    @home.join(".config", "app").mkpath
+    @home.join(".config", "app", "app.conf").write("home\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/app/app.conf": "configs/app.conf"
+      variables: {}
+    YAML
+
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], { "dry_run" => true }, {})
+      out, _err = capture_io { cli.pull }
+
+      assert_includes out, "PULL     .config/app/app.conf -> configs/app.conf"
+      assert_includes out, "Dry run complete"
+      assert_equal "repo\n", source.read
+    end
+  end
+
   def test_set_rejects_system_variable
     @project.join("configen.yaml").write(<<~YAML)
       templates: {}
@@ -189,7 +212,7 @@ class Configen::CLITest < Minitest::Test
       assert_includes out, "_configen_completion()"
       assert_includes out, "complete -F _configen_completion configen"
       assert_includes out, "bash zsh fish"
-      assert_includes out, "help version diff apply validate get set del theme"
+      assert_includes out, "help version diff apply pull validate get set del theme"
       assert_includes out, "completion-data variables --mode get"
     end
   end
@@ -257,5 +280,4 @@ class Configen::CLITest < Minitest::Test
       assert_includes vars_set_out, "font_size"
     end
   end
-
 end

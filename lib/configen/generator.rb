@@ -4,7 +4,7 @@ require "find"
 require "digest"
 
 class Configen::Generator
-  attr_reader :errors, :last_plan
+  attr_reader :errors, :last_plan, :last_seed_plan, :last_pull_plan
 
   def initialize(home_path:, manifest_path: nil)
     @home_path = Pathname.new(home_path)
@@ -16,6 +16,18 @@ class Configen::Generator
       delete: [],
       conflict: [],
       unchanged: []
+    }
+    @last_seed_plan = {
+      seed: [],
+      conflict: [],
+      unchanged: [],
+      desired: {}
+    }
+    @last_pull_plan = {
+      pull: [],
+      conflict: [],
+      unchanged: [],
+      seeds: {}
     }
   end
 
@@ -33,6 +45,42 @@ class Configen::Generator
   def apply(templates, variables = {}, dry_run: false, force: false)
     plan(templates, variables, force:)
     apply_from_plan(dry_run:)
+  end
+
+  def plan_seeds(seeds)
+    @errors = {}
+    @last_seed_plan = build_seed_plan(seeds)
+  end
+
+  def apply_seeds(seeds, dry_run: false)
+    plan_seeds(seeds)
+    apply_seeds_from_plan(dry_run:)
+  end
+
+  def apply_seeds_from_plan(dry_run: false)
+    return false unless @errors.empty? && @last_seed_plan[:conflict].empty?
+    return true if dry_run
+
+    write_seed_files!
+    @errors.empty?
+  end
+
+  def plan_pull(seeds)
+    @errors = {}
+    @last_pull_plan = build_pull_plan(seeds)
+  end
+
+  def pull(seeds, dry_run: false)
+    plan_pull(seeds)
+    pull_from_plan(dry_run:)
+  end
+
+  def pull_from_plan(dry_run: false)
+    return false unless @errors.empty? && @last_pull_plan[:conflict].empty?
+    return true if dry_run
+
+    copy_pulled_files!
+    @errors.empty?
   end
 
   def validate_templates(templates, variables = {})
@@ -171,6 +219,97 @@ class Configen::Generator
     plan
   end
 
+  def build_seed_plan(seeds)
+    plan = {
+      seed: [],
+      conflict: [],
+      unchanged: [],
+      desired: {}
+    }
+
+    seeds.each do |rel, spec|
+      source = spec.source
+      unless source.file?
+        add_seed_error(rel, "source file not found: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      if source.extname == ".erb"
+        add_seed_error(rel, "seed source must not be an ERB template: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      dst = @home_path.join(rel)
+      if File.exist?(dst) || File.symlink?(dst)
+        plan[:unchanged] << rel
+        next
+      end
+
+      if ancestor_is_file?(dst)
+        add_seed_error(rel, "parent path is a file")
+        plan[:conflict] << rel
+        next
+      end
+
+      plan[:desired][rel] = source.read
+      plan[:seed] << rel
+    end
+
+    %i[seed conflict unchanged].each do |kind|
+      plan[kind] = plan[kind].uniq.sort
+    end
+    plan
+  end
+
+  def build_pull_plan(seeds)
+    plan = {
+      pull: [],
+      conflict: [],
+      unchanged: [],
+      seeds: seeds
+    }
+
+    seeds.each do |rel, spec|
+      source = spec.source
+      unless source.file?
+        add_seed_error(rel, "source file not found: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      if source.extname == ".erb"
+        add_seed_error(rel, "seed source must not be an ERB template: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      dst = @home_path.join(rel)
+      unless File.exist?(dst) || File.symlink?(dst)
+        plan[:unchanged] << rel
+        next
+      end
+
+      unless File.file?(dst)
+        add_seed_error(rel, "target exists and is not a regular file")
+        plan[:conflict] << rel
+        next
+      end
+
+      if File.read(dst) == source.read
+        plan[:unchanged] << rel
+      else
+        plan[:pull] << rel
+      end
+    end
+
+    %i[pull conflict unchanged].each do |kind|
+      plan[kind] = plan[kind].uniq.sort
+    end
+    plan
+  end
+
   def collect_manifest_stale_entries(plan, desired)
     manifest = load_manifest
     return if manifest.empty?
@@ -215,6 +354,11 @@ class Configen::Generator
     else
       { content: File.read(path) }
     end
+  end
+
+  def add_seed_error(rel, message)
+    @errors[rel] ||= []
+    @errors[rel] << message
   end
 
   def render_erb(path, variables)
@@ -276,6 +420,25 @@ class Configen::Generator
 
       FileUtils.mkdir_p(dst.dirname)
       File.write(dst, @last_plan[:desired][rel])
+    end
+  end
+
+  def write_seed_files!
+    @last_seed_plan[:seed].each do |rel|
+      dst = @home_path.join(rel)
+      next if File.exist?(dst) || File.symlink?(dst)
+
+      FileUtils.mkdir_p(dst.dirname)
+      File.write(dst, @last_seed_plan[:desired][rel])
+    end
+  end
+
+  def copy_pulled_files!
+    @last_pull_plan[:pull].each do |rel|
+      spec = @last_pull_plan.fetch(:seeds).fetch(rel)
+      dst = @home_path.join(rel)
+      FileUtils.mkdir_p(spec.source.dirname)
+      File.write(spec.source, File.read(dst))
     end
   end
 

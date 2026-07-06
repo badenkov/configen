@@ -191,6 +191,57 @@ class Configen::GeneratorTest < Minitest::Test
     refute @home.join(".config/app/cfg").exist?
   end
 
+  def test_seeds_are_written_only_when_target_is_missing
+    @source.join("qbittorrent").mkpath
+    @source.join("qbittorrent", "qBittorrent.conf").write("seed\n")
+    @home.join(".config", "existing").mkpath
+    @home.join(".config", "existing", "app.conf").write("user-owned\n")
+
+    seeds = {
+      ".config/qbittorrent/qBittorrent.conf" => Configen::Config::SeedSpec.new(
+        source: @source.join("qbittorrent", "qBittorrent.conf"),
+        source_display: "qbittorrent/qBittorrent.conf"
+      ),
+      ".config/existing/app.conf" => Configen::Config::SeedSpec.new(
+        source: @source.join("qbittorrent", "qBittorrent.conf"),
+        source_display: "qbittorrent/qBittorrent.conf"
+      )
+    }
+
+    plan = @generator.plan_seeds(seeds)
+    assert_equal [".config/qbittorrent/qBittorrent.conf"], plan[:seed]
+    assert_equal [".config/existing/app.conf"], plan[:unchanged]
+
+    assert @generator.apply_seeds_from_plan
+    assert_equal "seed\n", @home.join(".config/qbittorrent/qBittorrent.conf").read
+    assert_equal "user-owned\n", @home.join(".config/existing/app.conf").read
+    refute @manifest.exist?
+  end
+
+  def test_pull_copies_changed_home_seed_back_to_source
+    @source.join("qbittorrent").mkpath
+    source_file = @source.join("qbittorrent", "qBittorrent.conf")
+    source_file.write("repo\n")
+    @home.join(".config", "qbittorrent").mkpath
+    @home.join(".config", "qbittorrent", "qBittorrent.conf").write("home\n")
+
+    seeds = {
+      ".config/qbittorrent/qBittorrent.conf" => Configen::Config::SeedSpec.new(
+        source: source_file,
+        source_display: "qbittorrent/qBittorrent.conf"
+      )
+    }
+
+    plan = @generator.plan_pull(seeds)
+    assert_equal [".config/qbittorrent/qBittorrent.conf"], plan[:pull]
+
+    assert @generator.pull_from_plan(dry_run: true)
+    assert_equal "repo\n", source_file.read
+
+    assert @generator.pull_from_plan
+    assert_equal "home\n", source_file.read
+  end
+
   def test_manifest_deletes_stale_file_when_template_removed
     @source.join("kitty").mkpath
     @source.join("kitty", "kitty.conf").write("font_size 12\n")

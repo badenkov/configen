@@ -47,6 +47,103 @@ class Configen::CommandTest < Minitest::Test
     end
   end
 
+  def test_diff_and_apply_seed_only_when_target_missing
+    @project.join("configs", "qbittorrent.conf").write("repo seed\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/qbittorrent/qBittorrent.conf": "configs/qbittorrent.conf"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert_includes command.diff, "SEED     .config/qbittorrent/qBittorrent.conf"
+
+      assert command.apply
+      assert_equal "repo seed\n", @home.join(".config/qbittorrent/qBittorrent.conf").read
+
+      @home.join(".config/qbittorrent/qBittorrent.conf").write("app changed\n")
+      assert_equal ["NO CHANGES"], command.diff
+      assert command.apply
+      assert_equal "app changed\n", @home.join(".config/qbittorrent/qBittorrent.conf").read
+    end
+  end
+
+  def test_seed_paths_do_not_match_hook_changed_globs
+    @project.join("configs", "app.conf").write("repo seed\n")
+    log_path = @root.join("seed-hook.log")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/app/app.conf": "configs/app.conf"
+      variables: {}
+      hooks:
+        after:
+          - description: "seed-hook"
+            run: "echo ran >> #{log_path}"
+            changed: ".config/app/**"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert command.apply
+      refute log_path.exist?
+    end
+  end
+
+  def test_pull_copies_changed_seed_target_back_to_repo
+    source = @project.join("configs", "app.conf")
+    source.write("repo\n")
+    @home.join(".config", "app").mkpath
+    @home.join(".config", "app", "app.conf").write("home\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/app/app.conf": "configs/app.conf"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      lines = command.pull(dry_run: true)
+      assert_includes lines, "PULL     .config/app/app.conf -> configs/app.conf"
+      assert_equal "repo\n", source.read
+
+      lines = command.pull
+      assert_includes lines, "PULL     .config/app/app.conf -> configs/app.conf"
+      assert_equal "home\n", source.read
+    end
+  end
+
+  def test_diff_reports_seed_validation_errors
+    @project.join("configs", "nvim").mkpath
+    @project.join("configs", "nvim", "init.lua").write("vim.o.number = true\n")
+    @project.join("configs", "seed.lua").write("seed\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/nvim": "configs/nvim"
+      seeds:
+        ".config/nvim/lua/app.lua": "configs/seed.lua"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert_empty command.diff
+      assert command.errors.key?("seeds")
+      assert_includes command.errors["seeds"], ".config/nvim/lua/app.lua: seed target collides with template target"
+    end
+  end
+
   def test_theme_overrides_variables_in_render
     @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
     @project.join("themes", "screencast").mkpath

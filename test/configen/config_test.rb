@@ -22,6 +22,7 @@ class Configen::ConfigTest < Minitest::Test
 
     assert_nil cfg.config_path
     assert_empty cfg.templates
+    assert_empty cfg.seeds
     assert_instance_of Configen::StrictOpenStruct, cfg.variables
     assert_equal @home.join(".local", "state", "configen").to_s, cfg.state_path
   end
@@ -51,6 +52,64 @@ class Configen::ConfigTest < Minitest::Test
     assert_equal project.join("configs", "kitty", "kitty.conf.erb"), kitty.source
     assert_equal project.join("configs", "nvim"), nvim.source
     assert_equal "ok", cfg.variables.value
+  end
+
+  def test_loads_seed_paths_relative_to_config
+    project = @root.join("dotfiles-seeds")
+    project.join("configs", "qbittorrent").mkpath
+    project.join("configs", "qbittorrent", "qBittorrent.conf").write("[Preferences]\n")
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/qbittorrent/qBittorrent.conf": "configs/qbittorrent/qBittorrent.conf"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    seed = cfg.seeds.fetch(".config/qbittorrent/qBittorrent.conf")
+
+    assert_equal project.join("configs", "qbittorrent", "qBittorrent.conf"), seed.source
+    assert_equal "configs/qbittorrent/qBittorrent.conf", seed.source_display
+  end
+
+  def test_rejects_erb_seed_source_at_config_load
+    project = @root.join("dotfiles-seed-erb")
+    project.mkpath
+    project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/app/config": "configs/app/config.erb"
+      variables: {}
+    YAML
+
+    error = assert_raises RuntimeError do
+      Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    end
+    assert_match(/Seed source must be a plain file, not an ERB template/, error.message)
+  end
+
+  def test_validate_seeds_reports_missing_source_and_template_collision
+    project = @root.join("dotfiles-seed-validate")
+    project.join("configs", "nvim").mkpath
+    project.join("configs", "app.conf").write("template\n")
+    project.join("configs", "nvim", "init.lua").write("vim.o.number = true\n")
+    project.join("configs", "seed.lua").write("seed\n")
+    project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/app/app.conf": "configs/app.conf"
+        ".config/nvim": "configs/nvim"
+      seeds:
+        ".config/app/app.conf": "configs/missing.conf"
+        ".config/nvim/lua/app.lua": "configs/seed.lua"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: project.join("configen.yaml").to_s)
+    errors = cfg.validate_seeds
+
+    assert_includes errors.join("\n"), ".config/app/app.conf: source file not found"
+    assert_includes errors, ".config/app/app.conf: seed target collides with template target"
+    assert_includes errors, ".config/nvim/lua/app.lua: seed target collides with template target"
   end
 
   def test_theme_variables_override_base_variables

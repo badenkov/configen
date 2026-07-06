@@ -8,10 +8,11 @@ class Configen::Command
     @generator = Configen::Generator.new(home_path: @home_path, manifest_path:)
     @hook_runner = Configen::HookRunner.new
     @templates = config.templates
+    @seeds = config.seeds
     @errors = {}
   end
 
-  attr_reader :templates, :errors
+  attr_reader :templates, :seeds, :errors
 
   def get_variable(path = nil, theme: nil)
     return @config.variable_values(theme:) if path.nil?
@@ -33,13 +34,23 @@ class Configen::Command
     return [] if vars.nil?
 
     plan = @generator.plan(@templates, vars, force:)
-    add_template_errors(@generator.errors)
+    template_errors = copy_errors(@generator.errors)
+    seed_validation_errors = @config.validate_seeds
+    seed_plan = empty_seed_plan
+    seed_errors = {}
+    if seed_validation_errors.empty?
+      seed_plan = @generator.plan_seeds(@seeds)
+      seed_errors = copy_errors(@generator.errors)
+    end
+    add_template_errors(template_errors)
+    add_seed_errors(seed_validation_errors)
+    add_seed_errors(seed_errors)
     return [] unless @errors.empty?
 
     changed_paths = (plan[:create] + plan[:update] + plan[:delete]).uniq
     before_hooks = @hook_runner.planned_hooks(phase: "before", hooks: @config.hooks[:before], changed_paths:)
     after_hooks = @hook_runner.planned_hooks(phase: "after", hooks: @config.hooks[:after], changed_paths:)
-    format_plan(plan, before_hooks:, after_hooks:)
+    format_plan(plan, seed_plan:, before_hooks:, after_hooks:)
   rescue StandardError => e
     add_general_error(e.message)
     []
@@ -51,7 +62,16 @@ class Configen::Command
     return false if vars.nil?
 
     plan = @generator.plan(@templates, vars, force:)
-    add_template_errors(@generator.errors)
+    template_errors = copy_errors(@generator.errors)
+    seed_validation_errors = @config.validate_seeds
+    seed_errors = {}
+    if seed_validation_errors.empty?
+      @generator.plan_seeds(@seeds)
+      seed_errors = copy_errors(@generator.errors)
+    end
+    add_template_errors(template_errors)
+    add_seed_errors(seed_validation_errors)
+    add_seed_errors(seed_errors)
     return false unless @errors.empty?
     return true if dry_run
 
@@ -60,18 +80,42 @@ class Configen::Command
     before_result = @hook_runner.run(phase: "before", hooks: @config.hooks[:before], changed_paths:)
 
     applied = @generator.apply_from_plan(dry_run: false)
+    template_apply_errors = copy_errors(@generator.errors)
+    seeds_applied = applied && @generator.apply_seeds_from_plan(dry_run: false)
+    seed_apply_errors = applied ? copy_errors(@generator.errors) : {}
     after_result = if applied
                      @hook_runner.run(phase: "after", hooks: @config.hooks[:after], changed_paths:)
                    else
                      { errors: [] }
                    end
 
-    add_template_errors(@generator.errors)
+    add_template_errors(template_apply_errors)
+    add_seed_errors(seed_apply_errors) unless seeds_applied
     add_hook_errors(before_result[:errors], after_result[:errors])
-    applied && @errors.empty?
+    applied && seeds_applied && @errors.empty?
   rescue StandardError => e
     add_general_error(e.message)
     false
+  end
+
+  def pull(dry_run: false)
+    @errors = {}
+    seed_validation_errors = @config.validate_seeds
+    add_seed_errors(seed_validation_errors)
+    return [] unless @errors.empty?
+
+    plan = @generator.plan_pull(@seeds)
+    add_seed_errors(@generator.errors)
+    return [] unless @errors.empty?
+
+    pulled = @generator.pull_from_plan(dry_run:)
+    add_seed_errors(@generator.errors)
+    return [] unless pulled && @errors.empty?
+
+    format_pull_plan(plan)
+  rescue StandardError => e
+    add_general_error(e.message)
+    []
   end
 
   def validate
@@ -82,6 +126,9 @@ class Configen::Command
 
     variable_errors = @config.validate_variable_overrides
     @errors["variables"] = variable_errors unless variable_errors.empty?
+
+    seed_errors = @config.validate_seeds
+    @errors["seeds"] = seed_errors unless seed_errors.empty?
 
     theme_errors = validate_themes_scope
     @errors["themes"] = theme_errors unless theme_errors.empty?
@@ -130,6 +177,15 @@ class Configen::Command
     @errors["templates"].uniq!
   end
 
+  def add_seed_errors(generator_errors)
+    messages = generator_errors.is_a?(Hash) ? flatten_generator_errors(generator_errors) : Array(generator_errors)
+    return if messages.empty?
+
+    @errors["seeds"] ||= []
+    @errors["seeds"].concat(messages)
+    @errors["seeds"].uniq!
+  end
+
   def add_hook_errors(*hook_errors)
     hooks = hook_errors.flatten.compact
     return if hooks.empty?
@@ -163,14 +219,25 @@ class Configen::Command
     @errors["variables"].uniq!
   end
 
-  def format_plan(plan, before_hooks:, after_hooks:)
+  def format_plan(plan, seed_plan:, before_hooks:, after_hooks:)
     lines = []
     lines.concat(plan[:create].map { |path| "CREATE   #{path}" })
     lines.concat(plan[:update].map { |path| "UPDATE   #{path}" })
     lines.concat(plan[:delete].map { |path| "DELETE   #{path}" })
+    lines.concat(seed_plan[:seed].map { |path| "SEED     #{path}" })
     lines.concat(plan[:conflict].map { |path| "CONFLICT #{path}" })
+    lines.concat(seed_plan[:conflict].map { |path| "CONFLICT #{path}" })
     lines.concat(before_hooks.map { |hook| "HOOK BEFORE #{hook.description}: #{hook.run}" })
     lines.concat(after_hooks.map { |hook| "HOOK AFTER  #{hook.description}: #{hook.run}" })
+    lines << "NO CHANGES" if lines.empty?
+    lines
+  end
+
+  def format_pull_plan(plan)
+    lines = plan[:pull].map do |path|
+      spec = @seeds.fetch(path)
+      "PULL     #{path} -> #{spec.source_display}"
+    end
     lines << "NO CHANGES" if lines.empty?
     lines
   end
@@ -210,5 +277,18 @@ class Configen::Command
                 end
       end
     end
+  end
+
+  def copy_errors(errors)
+    errors.transform_values { |messages| Array(messages).dup }
+  end
+
+  def empty_seed_plan
+    {
+      seed: [],
+      conflict: [],
+      unchanged: [],
+      desired: {}
+    }
   end
 end

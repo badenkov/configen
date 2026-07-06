@@ -49,6 +49,22 @@ class Configen::CLI < Thor
     end
   end
 
+  desc "pull", "Copy changed seed files from $HOME back to sources"
+  method_option :dry_run, type: :boolean, default: false
+  def pull
+    build_env do |command, _config|
+      lines = command.pull(dry_run: options["dry_run"])
+      if command.errors.empty?
+        lines.each do |line|
+          say line
+        end
+        say(options["dry_run"] ? "Dry run complete" : "Pull complete", :green)
+      else
+        print_errors(command.errors)
+      end
+    end
+  end
+
   desc "validate", "Validate templates and theme variables"
   def validate
     build_env do |command, _config|
@@ -171,6 +187,13 @@ class Configen::CLI < Thor
       if errors["variables"]
         say "Variables", %i[red bold]
         errors["variables"].each do |msg|
+          say "  #{msg}", :red
+        end
+      end
+
+      if errors["seeds"]
+        say "Seeds", %i[red bold]
+        errors["seeds"].each do |msg|
           say "  #{msg}", :red
         end
       end
