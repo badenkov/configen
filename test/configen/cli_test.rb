@@ -254,6 +254,80 @@ class Configen::CLITest < Minitest::Test
     end
   end
 
+  def test_failing_commands_raise_so_the_process_exits_non_zero
+    @project.join("configs").mkpath
+    @project.join("configs", "app.conf.erb").write("size <%= missing %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/app/app.conf": "configs/app.conf.erb"
+      variables: {}
+    YAML
+
+    with_home(chdir: @project) do
+      %i[diff apply validate].each do |command|
+        cli = Configen::CLI.new([], {}, {})
+        error = nil
+        capture_io { error = assert_raises(Thor::Error) { cli.public_send(command) } }
+
+        refute_empty error.message, "#{command} must fail with a message"
+      end
+    end
+  end
+
+  def test_apply_refuses_to_overwrite_unmanaged_file_without_force
+    @project.join("configs").mkpath
+    @project.join("configs", "app.conf").write("generated\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/app/app.conf": "configs/app.conf"
+      variables: {}
+    YAML
+
+    with_home(chdir: @project) do
+      @home.join(".config", "app").mkpath
+      @home.join(".config", "app", "app.conf").write("handwritten\n")
+
+      out, = capture_io do
+        assert_raises(Thor::Error) { Configen::CLI.new([], {}, {}).apply }
+      end
+
+      assert_includes out, "exists and was not created by configen"
+      assert_equal "handwritten\n", @home.join(".config/app/app.conf").read
+
+      forced = Configen::CLI.new([], { "force" => true }, {})
+      capture_io { forced.apply }
+
+      assert_equal "generated\n", @home.join(".config/app/app.conf").read
+    end
+  end
+
+  def test_config_option_selects_the_config_file
+    other = @root.join("other")
+    other.join("configs").mkpath
+    other.join("configs", "app.conf").write("from other\n")
+    other.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/app/app.conf": "configs/app.conf"
+      variables: {}
+    YAML
+
+    with_home(chdir: @root) do
+      cli = Configen::CLI.new([], { "config" => other.join("configen.yaml").to_s }, {})
+      out, = capture_io { cli.diff }
+
+      assert_includes out, "CREATE   .config/app/app.conf"
+    end
+  end
+
+  def test_config_option_reports_missing_file
+    with_home(chdir: @root) do
+      cli = Configen::CLI.new([], { "config" => @root.join("nope.yaml").to_s }, {})
+      error = assert_raises(Thor::Error) { cli.diff }
+
+      assert_includes error.message, "Config file not found"
+    end
+  end
+
   def test_completion_data_themes_and_variables
     @project.join("themes", "tokyo-night").mkpath
     @project.join("themes", "tokyo-night", "theme.yaml").write("font_size: 15\n")

@@ -14,6 +14,7 @@ require "etc"
 
 require_relative "configen/version"
 require_relative "configen/path_patterns"
+require_relative "configen/diff"
 require_relative "configen/strict_open_struct"
 
 module Configen::ERB; end

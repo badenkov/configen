@@ -3,6 +3,8 @@
 class Configen::CLI < Thor
   include Configen::CLICompletion
 
+  class_option :config, type: :string, aliases: "-c", desc: "Path to configen.yaml"
+
   desc "version", "Version"
   def version
     build_env do |_command, config|
@@ -22,32 +24,28 @@ class Configen::CLI < Thor
 
   desc "diff", "Show planned changes in $HOME"
   method_option :theme, type: :string
+  method_option :patch, type: :boolean, default: false, aliases: "-p", desc: "Show file contents as a unified diff"
   def diff
     build_env do |command, config|
-      lines = command.diff(theme: options["theme"])
-      if command.errors.empty?
-        lines.each do |line|
-          say line
-        end
-        say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
-      else
-        print_errors(command.errors)
-      end
+      lines = command.diff(theme: options["theme"], patch: options["patch"])
+      fail_with(command.errors, "diff failed") unless command.errors.empty?
+
+      lines.each { |line| say line }
+      say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
     end
   end
 
   desc "apply", "Apply configs"
   method_option :dry_run, type: :boolean, default: false
-  method_option :force, type: :boolean, default: false
+  method_option :force, type: :boolean, default: false, desc: "Take ownership of existing files and symlinks"
   method_option :theme, type: :string
   def apply
     build_env do |command, config|
-      if command.apply(dry_run: options["dry_run"], force: options["force"], theme: options["theme"])
-        say(options["dry_run"] ? "Dry run complete" : "Apply complete", :green)
-        say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
-      else
-        print_errors(command.errors)
-      end
+      applied = command.apply(dry_run: options["dry_run"], force: options["force"], theme: options["theme"])
+      fail_with(command.errors, "apply failed") unless applied
+
+      say(options["dry_run"] ? "Dry run complete" : "Apply complete", :green)
+      say "Theme: #{config.current_theme(options["theme"]) || "(none)"}", :green
     end
   end
 
@@ -56,25 +54,19 @@ class Configen::CLI < Thor
   def pull
     build_env do |command, _config|
       lines = command.pull(dry_run: options["dry_run"])
-      if command.errors.empty?
-        lines.each do |line|
-          say line
-        end
-        say(options["dry_run"] ? "Dry run complete" : "Pull complete", :green)
-      else
-        print_errors(command.errors)
-      end
+      fail_with(command.errors, "pull failed") unless command.errors.empty?
+
+      lines.each { |line| say line }
+      say(options["dry_run"] ? "Dry run complete" : "Pull complete", :green)
     end
   end
 
   desc "validate", "Validate templates and theme variables"
   def validate
     build_env do |command, _config|
-      if command.validate
-        say "Validation passed", :green
-      else
-        print_errors(command.errors)
-      end
+      fail_with(command.errors, "validation failed") unless command.validate
+
+      say "Validation passed", :green
     end
   end
 
@@ -136,7 +128,7 @@ class Configen::CLI < Thor
         end
       end
 
-      print_errors(command.errors) if name && !command.validate_selected(theme: name)
+      fail_with(command.errors, "theme is not usable") if name && !command.validate_selected(theme: name)
     end
   end
 
@@ -172,53 +164,47 @@ class Configen::CLI < Thor
     end
   end
 
+  ERROR_SCOPES = {
+    "templates" => "Templates",
+    "variables" => "Variables",
+    "seeds" => "Seeds",
+    "adopt" => "Existing files",
+    "hooks" => "Hooks",
+    "general" => "Errors"
+  }.freeze
+
   no_commands do
     def print_errors(errors)
-      if errors["templates"]
-        say "Templates", %i[red bold]
-        errors["templates"].each do |msg|
-          say "  #{msg}", :red
-        end
-      end
-
-      if errors["variables"]
-        say "Variables", %i[red bold]
-        errors["variables"].each do |msg|
-          say "  #{msg}", :red
-        end
-      end
-
-      if errors["seeds"]
-        say "Seeds", %i[red bold]
-        errors["seeds"].each do |msg|
-          say "  #{msg}", :red
-        end
+      ERROR_SCOPES.each do |scope, title|
+        print_error_group(title, errors[scope])
       end
 
       (errors["themes"] || {}).each do |theme_name, messages|
-        say "Theme: #{theme_name}", %i[red bold]
-        messages.each do |msg|
-          say "  #{msg}", :red
-        end
-      end
-
-      if errors["hooks"]
-        say "Hooks", %i[red bold]
-        errors["hooks"].each do |msg|
-          say "  #{msg}", :red
-        end
-      end
-
-      return unless errors["general"]
-
-      say "Errors", %i[red bold]
-      errors["general"].each do |msg|
-        say "  #{msg}", :red
+        print_error_group("Theme: #{theme_name}", messages)
       end
     end
 
+    def print_error_group(title, messages)
+      return if messages.nil? || messages.empty?
+
+      say title, %i[red bold]
+      messages.each { |message| say "  #{message}", :red }
+    end
+
+    # Every failing command must report a non-zero exit status: the NixOS
+    # activation service and any script wrapping configen depend on it.
+    def fail_with(errors, message)
+      print_errors(errors)
+      raise Thor::Error, message
+    end
+
     def build_env
-      @config ||= Configen::Config.new
+      @config ||= begin
+        Configen::Config.new(config: options["config"])
+      rescue StandardError => e
+        raise Thor::Error, e.message
+      end
+
       unless @config.config_path
         raise Thor::Error,
               "Config file not found. Create ./configen.yaml or set up /etc/configen/users/$USER/current/configen.yaml."

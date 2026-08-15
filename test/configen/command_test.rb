@@ -122,6 +122,86 @@ class Configen::CommandTest < Minitest::Test
     end
   end
 
+  def test_diff_patch_shows_unified_content_diff
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert command.apply
+
+      @home.join(".config/kitty/kitty.conf").write("font_size 99\n")
+      lines = command.diff(patch: true)
+
+      assert_includes lines, "UPDATE   .config/kitty/kitty.conf"
+      assert_includes lines, "+++ b/.config/kitty/kitty.conf"
+      assert_includes lines, "-font_size 99"
+      assert_includes lines, "+font_size 12"
+
+      refute_includes command.diff, "-font_size 99"
+    end
+  end
+
+  def test_diff_annotates_mode_drift
+    source = @project.join("configs", "config.erb")
+    source.write("Host *\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".ssh/config":
+          source: "configs/config.erb"
+          mode: "600"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert command.apply
+      File.chmod(0o644, @home.join(".ssh/config"))
+
+      assert_includes command.diff, "UPDATE   .ssh/config (mode 644 -> 600)"
+    end
+  end
+
+  def test_apply_refuses_unmanaged_target_until_forced
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+    @home.join(".config", "kitty").mkpath
+    @home.join(".config", "kitty", "kitty.conf").write("handwritten\n")
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert_includes command.diff, "ADOPT    .config/kitty/kitty.conf"
+
+      refute command.apply
+      assert command.errors.key?("adopt")
+      assert_equal "handwritten\n", @home.join(".config/kitty/kitty.conf").read
+
+      assert command.apply(force: true)
+      assert_equal "font_size 12\n", @home.join(".config/kitty/kitty.conf").read
+
+      # Now managed: a plain apply keeps it up to date.
+      @home.join(".config/kitty/kitty.conf").write("drift\n")
+      assert command.apply
+      assert_equal "font_size 12\n", @home.join(".config/kitty/kitty.conf").read
+    end
+  end
+
   def test_diff_reports_seed_validation_errors
     @project.join("configs", "nvim").mkpath
     @project.join("configs", "nvim", "init.lua").write("vim.o.number = true\n")

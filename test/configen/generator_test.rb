@@ -84,12 +84,57 @@ class Configen::GeneratorTest < Minitest::Test
     }
 
     plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
-    assert_equal [".config/nvim/init.lua"], plan[:update]
+    assert_equal [".config/nvim/init.lua"], plan[:adopt]
     assert_equal [".config/nvim/legacy.lua"], plan[:delete]
 
-    assert @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    assert @generator.apply(templates, Configen::StrictOpenStruct.new({}), force: true)
     assert @home.join(".config/nvim/init.lua").exist?
     refute @home.join(".config/nvim/legacy.lua").exist?
+  end
+
+  def test_existing_unmanaged_file_needs_force_and_is_managed_afterwards
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf").write("generated\n")
+    @home.join(".config", "kitty").mkpath
+    @home.join(".config", "kitty", "kitty.conf").write("handwritten\n")
+
+    templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
+    }
+    vars = Configen::StrictOpenStruct.new({})
+
+    plan = @generator.plan(templates, vars)
+    assert_equal [".config/kitty/kitty.conf"], plan[:adopt]
+    assert_empty plan[:update]
+    refute @generator.valid?
+    refute @generator.apply_from_plan
+    assert_equal "handwritten\n", @home.join(".config/kitty/kitty.conf").read
+
+    assert @generator.apply(templates, vars, force: true)
+    assert_equal "generated\n", @home.join(".config/kitty/kitty.conf").read
+
+    # Once recorded in the manifest the file is ours: no force needed anymore.
+    @source.join("kitty", "kitty.conf").write("generated v2\n")
+    plan = @generator.plan(templates, vars)
+    assert_equal [".config/kitty/kitty.conf"], plan[:update]
+    assert @generator.apply_from_plan
+    assert_equal "generated v2\n", @home.join(".config/kitty/kitty.conf").read
+  end
+
+  def test_existing_unmanaged_file_with_identical_content_is_unchanged
+    @source.join("kitty").mkpath
+    @source.join("kitty", "kitty.conf").write("same\n")
+    @home.join(".config", "kitty").mkpath
+    @home.join(".config", "kitty", "kitty.conf").write("same\n")
+
+    templates = {
+      ".config/kitty/kitty.conf" => Configen::Config::TemplateSpec.new(source: @source.join("kitty", "kitty.conf"))
+    }
+
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+    assert_equal [".config/kitty/kitty.conf"], plan[:unchanged]
+    assert_empty plan[:adopt]
+    assert @generator.apply_from_plan
   end
 
   def test_directory_ignore_preserves_app_managed_files_and_subdirectories
@@ -114,9 +159,9 @@ class Configen::GeneratorTest < Minitest::Test
       )
     }
 
-    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}), force: true)
 
-    assert_equal [".config/herdr/config.toml"], plan[:update]
+    assert_equal [".config/herdr/config.toml"], plan[:adopt]
     assert_equal [".config/herdr/stale.tmp"], plan[:delete]
 
     assert @generator.apply_from_plan
@@ -199,7 +244,7 @@ class Configen::GeneratorTest < Minitest::Test
     refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
   end
 
-  def test_symlink_conflict_without_force
+  def test_symlink_requires_force
     @source.join("kitty").mkpath
     @source.join("kitty", "kitty.conf").write("new\n")
     @home.join(".config", "kitty").mkpath
@@ -210,8 +255,9 @@ class Configen::GeneratorTest < Minitest::Test
     }
 
     plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
-    assert_equal [".config/kitty/kitty.conf"], plan[:conflict]
+    assert_equal [".config/kitty/kitty.conf"], plan[:adopt]
     refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    assert @home.join(".config/kitty/kitty.conf").symlink?
   end
 
   def test_symlink_replaced_with_force

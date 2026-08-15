@@ -10,9 +10,6 @@ class Configen::Config
     hooks: {
       before: [],
       after: []
-    },
-    state_path: lambda { |env, home|
-      Pathname.new(env["XDG_STATE_HOME"] || File.join(home, ".local", "state")).join("configen").to_s
     }
   }.freeze
   SYSTEM_CONFIG_ROOT = "/etc/configen"
@@ -76,8 +73,10 @@ class Configen::Config
     save_variable_overrides(overrides)
   end
 
+  # State lives outside the repository: it is per-machine, not per-config.
   def state_path
-    @settings.state_path.to_s
+    @state_path ||= Pathname.new(@env["XDG_STATE_HOME"] || File.join(@home, ".local", "state"))
+                            .join("configen").to_s
   end
 
   def current_theme(override = nil)
@@ -137,15 +136,7 @@ class Configen::Config
   end
 
   def defaults
-    DEFAULTS.transform_values do |v|
-      if v.is_a?(Proc)
-        v.call(@env, @home)
-      elsif v.is_a?(Hash)
-        Marshal.load(Marshal.dump(v))
-      else
-        v
-      end
-    end
+    deep_copy(DEFAULTS)
   end
 
   def load_from_file
@@ -314,7 +305,12 @@ class Configen::Config
   end
 
   def resolve_config_path(explicit_path)
-    return Pathname.new(explicit_path).expand_path if explicit_path
+    if explicit_path
+      path = Pathname.new(explicit_path).expand_path
+      raise "Config file not found: #{path}" unless path.file?
+
+      return path
+    end
 
     cwd_candidate = Pathname.new(Dir.pwd).join("configen.yaml")
     return cwd_candidate if cwd_candidate.file?
