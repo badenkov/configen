@@ -102,17 +102,33 @@ class Configen::CLI < Thor
     end
   end
 
-  desc "theme [NAME]", "Show active theme or set active theme"
+  desc "theme [NAME]", "Show themes, or persist the active theme"
+  method_option :apply, type: :boolean, default: false, desc: "Apply configs before persisting the theme"
+  method_option :force, type: :boolean, default: false, desc: "Take ownership of existing files and symlinks"
   def theme(name = nil)
     build_env do |command, config|
       if name
         begin
-          config.set_active_theme!(name)
+          name = config.ensure_theme_exists!(name)
         rescue StandardError => e
           available = config.available_themes
           message = e.message
           message = "#{message}. Available themes: #{available.join(", ")}" unless available.empty?
           raise Thor::Error, message
+        end
+
+        if options["apply"]
+          applied = command.apply(force: options["force"], theme: name)
+          fail_with(command.errors, "theme apply failed") unless applied
+          say "Apply complete", :green
+        else
+          fail_with(command.errors, "theme is not usable") unless command.validate_selected(theme: name)
+        end
+
+        begin
+          config.set_active_theme!(name)
+        rescue StandardError => e
+          raise Thor::Error, e.message
         end
       end
       active = config.current_theme
@@ -127,8 +143,6 @@ class Configen::CLI < Thor
           say "#{marker} #{theme_name}"
         end
       end
-
-      fail_with(command.errors, "theme is not usable") if name && !command.validate_selected(theme: name)
     end
   end
 

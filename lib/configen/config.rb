@@ -95,12 +95,18 @@ class Configen::Config
   end
 
   def set_active_theme!(name)
+    theme_name = ensure_theme_exists!(name)
+
+    FileUtils.mkdir_p(theme_state_file.dirname)
+    File.write(theme_state_file, "#{theme_name}\n")
+    theme_name
+  end
+
+  def ensure_theme_exists!(name)
     theme_name = normalize_theme_name(name)
     theme_path = resolve_theme_path(theme_name)
     raise "Theme not found: #{theme_name} (expected #{theme_path})" unless theme_path.file?
 
-    FileUtils.mkdir_p(theme_state_file.dirname)
-    File.write(theme_state_file, "#{theme_name}\n")
     theme_name
   end
 

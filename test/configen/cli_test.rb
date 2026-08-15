@@ -52,6 +52,96 @@ class Configen::CLITest < Minitest::Test
     end
   end
 
+  def test_theme_apply_applies_configs_then_persists_active_theme
+    @project.join("configs").mkpath
+    @project.join("configs", "app.conf.erb").write("size=<%= size %>\n")
+    @project.join("themes", "large").mkpath
+    @project.join("themes", "large", "theme.yaml").write("size: 20\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/app.conf": "configs/app.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], { "apply" => true }, {})
+      out, _err = capture_io { cli.theme("large") }
+
+      assert_equal "size=20\n", @home.join(".config", "app.conf").read
+      assert_equal "large", Configen::Config.new.current_theme
+      assert_includes out, "Apply complete"
+      assert_includes out, "Active theme: large"
+    end
+  end
+
+  def test_theme_persists_without_changing_home_by_default
+    @project.join("configs").mkpath
+    @project.join("configs", "app.conf.erb").write("size=<%= size %>\n")
+    @project.join("themes", "large").mkpath
+    @project.join("themes", "large", "theme.yaml").write("size: 20\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/app.conf": "configs/app.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
+      capture_io { cli.theme("large") }
+
+      refute @home.join(".config", "app.conf").exist?
+      assert_equal "large", Configen::Config.new.current_theme
+    end
+  end
+
+  def test_theme_does_not_persist_when_apply_fails
+    @project.join("configs").mkpath
+    @project.join("configs", "app.conf.erb").write("size=<%= size %>\n")
+    @project.join("themes", "normal").mkpath
+    @project.join("themes", "normal", "theme.yaml").write("size: 12\n")
+    @project.join("themes", "large").mkpath
+    @project.join("themes", "large", "theme.yaml").write("size: 20\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      theme: normal
+      templates:
+        ".config/app.conf": "configs/app.conf.erb"
+      variables:
+        size: 12
+    YAML
+    @home.join(".config").mkpath
+    @home.join(".config", "app.conf").write("unmanaged\n")
+
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], { "apply" => true }, {})
+      capture_io { assert_raises(Thor::Error) { cli.theme("large") } }
+
+      assert_equal "unmanaged\n", @home.join(".config", "app.conf").read
+      assert_equal "normal", Configen::Config.new.current_theme
+    end
+  end
+
+  def test_theme_does_not_persist_an_invalid_theme
+    @project.join("themes", "normal").mkpath
+    @project.join("themes", "normal", "theme.yaml").write("size: 12\n")
+    @project.join("themes", "broken").mkpath
+    @project.join("themes", "broken", "theme.yaml").write("unknown: true\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      theme: normal
+      templates: {}
+      variables:
+        size: 12
+    YAML
+
+    with_home(chdir: @project) do
+      cli = Configen::CLI.new([], {}, {})
+      capture_io { assert_raises(Thor::Error) { cli.theme("broken") } }
+
+      assert_equal "normal", Configen::Config.new.current_theme
+    end
+  end
+
   def test_get_and_set_variable_commands_support_nested_paths
     @project.join("configen.yaml").write(<<~YAML)
       templates: {}
@@ -216,6 +306,8 @@ class Configen::CLITest < Minitest::Test
       assert_includes out, "bash zsh fish"
       assert_includes out, "help version diff apply pull validate get set del theme"
       assert_includes out, "completion-data variables 2>/dev/null"
+      assert_includes out, "--apply"
+      refute_includes out, "--no-apply"
     end
   end
 

@@ -52,7 +52,7 @@ configen apply --force
 | `configen apply` | Render templates and write seeds; `--dry-run`, `--force` |
 | `configen pull` | Copy changed seed files from `$HOME` back into the repository |
 | `configen validate` | Check templates, seeds, themes and saved overrides without touching `$HOME` |
-| `configen theme [NAME]` | Show themes, or persist the active one |
+| `configen theme [NAME]` | Show themes, or persist the active one; `--apply`, `--force` |
 | `configen get [VAR]` | Show all effective variables, or one value |
 | `configen set VAR VALUE` | Persist a variable override |
 | `configen del VAR` | Remove a persisted override |
@@ -159,6 +159,10 @@ Values are resolved in three layers, each overriding the previous one:
 
 The active theme is `--theme`, else the theme saved by `configen theme NAME`, else `theme` from
 `configen.yaml`. A theme file is either a plain variables mapping or `{ variables: ... }`.
+
+`configen theme NAME` validates and persists the selected theme without changing files in `$HOME`.
+Use `configen theme NAME --apply` to apply it immediately; in that case the theme is persisted only
+after a successful apply.
 
 ```yaml
 # themes/tokyo-night/theme.yaml
