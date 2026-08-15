@@ -3,7 +3,6 @@
 require "open3"
 
 class Configen::HookRunner
-  MATCH_FLAGS = File::FNM_PATHNAME | File::FNM_DOTMATCH
   PlannedHook = Struct.new(:phase, :description, :run, keyword_init: true)
 
   def initialize(env: ENV, shell: nil, out: $stdout, err: $stderr)
@@ -53,18 +52,7 @@ class Configen::HookRunner
   def should_run_for_changes?(hook, changed_paths)
     return true if hook.changed.nil? || hook.changed.empty?
 
-    hook.changed.any? do |pattern|
-      changed_paths.any? { |path| path_matches_pattern?(path, pattern) }
-    end
-  end
-
-  def path_matches_pattern?(path, pattern)
-    if pattern.end_with?("/**")
-      prefix = pattern.delete_suffix("/**")
-      return path == prefix || path.start_with?("#{prefix}/")
-    end
-
-    File.fnmatch?(pattern, path, MATCH_FLAGS)
+    changed_paths.any? { |path| Configen::PathPatterns.match?(path, hook.changed) }
   end
 
   def condition_allows?(hook)

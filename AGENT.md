@@ -1,10 +1,16 @@
 # AGENT
 
 ## Project
-- `configen` is a Ruby CLI for managing user dotfiles in `$HOME`.
+- `configen` is a Ruby CLI for managing user dotfiles in `$HOME`. Only `$HOME`: everything else is
+  NixOS's job, and targets are always relative paths.
 - Sources are declared in `configen.yaml` via `templates` mapping (target path -> source path).
 - `.erb` files are rendered with variables/theme variables; non-ERB files are copied.
 - Directory sources are synced exactly (extra files in target are removed).
+- Files configen never wrote are `ADOPT` and need `--force`; ownership is tracked in the manifest
+  (`rendered.yaml`). Never make apply overwrite unmanaged files silently.
+- Every failing command must raise `Thor::Error` so the exit status is non-zero: the NixOS
+  activation service depends on it.
+- `ignore` and hook `changed` share one glob dialect, implemented in `Configen::PathPatterns`.
 
 ## Main Paths
 - CLI entrypoint: `bin/configen` (dev) and `exe/configen`.

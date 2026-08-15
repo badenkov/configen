@@ -2,37 +2,93 @@
 
 require "find"
 require "digest"
+require "tempfile"
 
 class Configen::Generator
-  attr_reader :errors, :last_plan
+  DesiredFile = Struct.new(:content, :mode, keyword_init: true)
+  ManagedDirectory = Struct.new(:target, :ignore, keyword_init: true)
+
+  attr_reader :errors, :last_plan, :last_seed_plan, :last_pull_plan
 
   def initialize(home_path:, manifest_path: nil)
     @home_path = Pathname.new(home_path)
     @manifest_path = manifest_path.nil? ? nil : Pathname.new(manifest_path)
     @errors = {}
+    @force = false
     @last_plan = {
       create: [],
       update: [],
       delete: [],
+      adopt: [],
       conflict: [],
-      unchanged: []
+      unchanged: [],
+      modes: {}
+    }
+    @last_seed_plan = {
+      seed: [],
+      conflict: [],
+      unchanged: [],
+      desired: {}
+    }
+    @last_pull_plan = {
+      pull: [],
+      conflict: [],
+      unchanged: [],
+      seeds: {}
     }
   end
 
   def valid?
-    @errors.empty? && @last_plan[:conflict].empty?
+    @errors.empty? && @last_plan[:conflict].empty? && (@force || @last_plan[:adopt].empty?)
   end
 
   def plan(templates, variables = {}, force: false)
     @errors = {}
+    @force = force
 
-    desired, managed_dir_roots = build_desired(templates, variables)
-    @last_plan = build_plan(desired, managed_dir_roots, force:)
+    desired, managed_directories = build_desired(templates, variables)
+    @last_plan = build_plan(desired, managed_directories)
   end
 
   def apply(templates, variables = {}, dry_run: false, force: false)
     plan(templates, variables, force:)
     apply_from_plan(dry_run:)
+  end
+
+  def plan_seeds(seeds)
+    @errors = {}
+    @last_seed_plan = build_seed_plan(seeds)
+  end
+
+  def apply_seeds(seeds, dry_run: false)
+    plan_seeds(seeds)
+    apply_seeds_from_plan(dry_run:)
+  end
+
+  def apply_seeds_from_plan(dry_run: false)
+    return false unless @errors.empty? && @last_seed_plan[:conflict].empty?
+    return true if dry_run
+
+    write_seed_files!
+    @errors.empty?
+  end
+
+  def plan_pull(seeds)
+    @errors = {}
+    @last_pull_plan = build_pull_plan(seeds)
+  end
+
+  def pull(seeds, dry_run: false)
+    plan_pull(seeds)
+    pull_from_plan(dry_run:)
+  end
+
+  def pull_from_plan(dry_run: false)
+    return false unless @errors.empty? && @last_pull_plan[:conflict].empty?
+    return true if dry_run
+
+    copy_pulled_files!
+    @errors.empty?
   end
 
   def validate_templates(templates, variables = {})
@@ -56,27 +112,37 @@ class Configen::Generator
 
   def build_desired(templates, variables)
     desired = {}
-    managed_dir_roots = []
+    managed_directories = []
 
     templates.each do |target_rel, spec|
       source = spec.source
 
       if source.directory?
-        managed_dir_roots << target_rel
+        ignore = spec.ignore || []
+        managed_directories << ManagedDirectory.new(target: target_rel, ignore: ignore)
         source.glob("**/*", File::FNM_DOTMATCH).select(&:file?).each do |src|
           rel = src.relative_path_from(source).to_s
-          dst = File.join(target_rel, strip_template_ext(rel))
-          render_into_desired!(desired, dst, src.to_s, variables)
+          rendered_rel = strip_template_ext(rel)
+          next if Configen::PathPatterns.match?(rendered_rel, ignore)
+
+          dst = File.join(target_rel, rendered_rel)
+          render_into_desired!(desired, dst, src.to_s, variables, mode: desired_mode(src, spec.mode))
         end
       else
-        render_into_desired!(desired, target_rel, source.to_s, variables)
+        unless (spec.ignore || []).empty?
+          @errors[target_rel] ||= []
+          @errors[target_rel] << "ignore is supported only for directory templates"
+          next
+        end
+
+        render_into_desired!(desired, target_rel, source.to_s, variables, mode: desired_mode(source, spec.mode))
       end
     end
 
-    [desired, managed_dir_roots]
+    [desired, managed_directories]
   end
 
-  def render_into_desired!(desired, target_rel, source_path, variables)
+  def render_into_desired!(desired, target_rel, source_path, variables, mode:)
     result = render_template(source_path, variables)
     if result[:content].nil?
       @errors[target_rel] ||= []
@@ -84,77 +150,40 @@ class Configen::Generator
       return
     end
 
-    desired[target_rel] = result[:content]
+    desired[target_rel] = DesiredFile.new(content: result[:content], mode: mode)
   end
 
-  def build_plan(desired, managed_dir_roots, force:)
+  def build_plan(desired, managed_directories)
+    @manifest = load_manifest
     plan = {
       desired: desired,
       create: [],
       update: [],
       delete: [],
+      adopt: [],
       conflict: [],
-      unchanged: []
+      unchanged: [],
+      modes: {}
     }
 
-    desired.each do |rel, content|
-      dst = @home_path.join(rel)
-      if ancestor_is_file?(dst)
-        plan[:conflict] << rel
-        @errors["conflicts"] ||= []
-        @errors["conflicts"] << "#{rel}: parent path is a file"
-        next
-      end
+    desired.each do |rel, file|
+      kind, message = classify_target(rel, file, plan)
+      plan[kind] << rel
+      next unless message
 
-      if File.directory?(dst)
-        plan[:conflict] << rel
-        @errors["conflicts"] ||= []
-        @errors["conflicts"] << "#{rel}: target is a directory"
-        next
-      end
-
-      if File.exist?(dst) || File.symlink?(dst)
-        if File.symlink?(dst)
-          unless force
-            plan[:conflict] << rel
-            @errors["conflicts"] ||= []
-            @errors["conflicts"] << "#{rel}: target is a symlink (use --force to replace)"
-            next
-          end
-
-          if File.exist?(dst)
-            current = File.read(dst)
-            if current == content
-              plan[:unchanged] << rel
-            else
-              plan[:update] << rel
-            end
-          else
-            plan[:update] << rel
-          end
-        elsif File.file?(dst)
-          current = File.read(dst)
-          if current == content
-            plan[:unchanged] << rel
-          else
-            plan[:update] << rel
-          end
-        else
-          plan[:conflict] << rel
-          @errors["conflicts"] ||= []
-          @errors["conflicts"] << "#{rel}: target exists and is not a regular file"
-        end
-      else
-        plan[:create] << rel
-      end
+      @errors["conflicts"] ||= []
+      @errors["conflicts"] << "#{rel}: #{message}"
     end
 
-    managed_dir_roots.each do |root_rel|
-      root_abs = @home_path.join(root_rel)
+    managed_directories.each do |managed|
+      root_abs = @home_path.join(managed.target)
       next unless root_abs.directory?
 
       Find.find(root_abs.to_s) do |path|
         next if File.directory?(path)
+
+        managed_rel = Pathname.new(path).relative_path_from(root_abs).to_s
+        next if Configen::PathPatterns.match?(managed_rel, managed.ignore)
 
         rel = Pathname.new(path).relative_path_from(@home_path).to_s
         next if desired.key?(rel)
@@ -163,20 +192,142 @@ class Configen::Generator
       end
     end
 
-    collect_manifest_stale_entries(plan, desired)
+    collect_manifest_stale_entries(plan, desired, managed_directories)
 
-    %i[create update delete conflict unchanged].each do |kind|
+    %i[create update delete adopt conflict unchanged].each do |kind|
       plan[kind] = plan[kind].uniq.sort
     end
     plan
   end
 
-  def collect_manifest_stale_entries(plan, desired)
-    manifest = load_manifest
+  # A target is *managed* when the last successful apply recorded it in the
+  # manifest. Overwriting a managed file is routine; overwriting anything else
+  # would destroy content configen never created, so it needs `--force`.
+  def classify_target(rel, file, plan)
+    dst = @home_path.join(rel)
+
+    return [:conflict, "parent path is a file"] if ancestor_is_file?(dst)
+    return [:conflict, "target is a directory"] if File.directory?(dst)
+    return [:create, nil] unless File.exist?(dst) || File.symlink?(dst)
+    return [ownership_kind(rel), nil] if File.symlink?(dst)
+    return [:conflict, "target exists and is not a regular file"] unless File.file?(dst)
+
+    record_mode_change(plan, rel, dst, file.mode)
+    return [:unchanged, nil] if File.read(dst) == file.content && file_mode_matches?(dst, file.mode)
+
+    [ownership_kind(rel), nil]
+  end
+
+  def ownership_kind(rel)
+    @manifest.key?(rel) ? :update : :adopt
+  end
+
+  def record_mode_change(plan, rel, dst, desired_mode)
+    current = dst.stat.mode & 0o7777
+    return if current == desired_mode
+
+    plan[:modes][rel] = [current, desired_mode]
+  end
+
+  def build_seed_plan(seeds)
+    plan = {
+      seed: [],
+      conflict: [],
+      unchanged: [],
+      desired: {}
+    }
+
+    seeds.each do |rel, spec|
+      source = spec.source
+      unless source.file?
+        add_seed_error(rel, "source file not found: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      if source.extname == ".erb"
+        add_seed_error(rel, "seed source must not be an ERB template: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      dst = @home_path.join(rel)
+      if File.exist?(dst) || File.symlink?(dst)
+        plan[:unchanged] << rel
+        next
+      end
+
+      if ancestor_is_file?(dst)
+        add_seed_error(rel, "parent path is a file")
+        plan[:conflict] << rel
+        next
+      end
+
+      plan[:desired][rel] = DesiredFile.new(content: source.read, mode: desired_mode(source, nil))
+      plan[:seed] << rel
+    end
+
+    %i[seed conflict unchanged].each do |kind|
+      plan[kind] = plan[kind].uniq.sort
+    end
+    plan
+  end
+
+  def build_pull_plan(seeds)
+    plan = {
+      pull: [],
+      conflict: [],
+      unchanged: [],
+      seeds: seeds
+    }
+
+    seeds.each do |rel, spec|
+      source = spec.source
+      unless source.file?
+        add_seed_error(rel, "source file not found: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      if source.extname == ".erb"
+        add_seed_error(rel, "seed source must not be an ERB template: #{source}")
+        plan[:conflict] << rel
+        next
+      end
+
+      dst = @home_path.join(rel)
+      unless File.exist?(dst) || File.symlink?(dst)
+        plan[:unchanged] << rel
+        next
+      end
+
+      unless File.file?(dst)
+        add_seed_error(rel, "target exists and is not a regular file")
+        plan[:conflict] << rel
+        next
+      end
+
+      if File.read(dst) == source.read
+        plan[:unchanged] << rel
+      else
+        plan[:pull] << rel
+      end
+    end
+
+    %i[pull conflict unchanged].each do |kind|
+      plan[kind] = plan[kind].uniq.sort
+    end
+    plan
+  end
+
+  def collect_manifest_stale_entries(plan, desired, managed_directories)
+    manifest = @manifest
     return if manifest.empty?
 
     stale_paths = manifest.keys - desired.keys
     stale_paths.each do |rel|
+      next if ignored_managed_path?(rel, managed_directories)
+
       path = @home_path.join(rel)
       next unless path.file? || path.symlink?
 
@@ -188,6 +339,16 @@ class Configen::Generator
         @errors["conflicts"] ||= []
         @errors["conflicts"] << "#{rel}: stale generated file was modified; refusing to delete"
       end
+    end
+  end
+
+  def ignored_managed_path?(path, managed_directories)
+    managed_directories.any? do |managed|
+      prefix = "#{managed.target}/"
+      next false unless path.start_with?(prefix)
+
+      relative = path.delete_prefix(prefix)
+      Configen::PathPatterns.match?(relative, managed.ignore)
     end
   end
 
@@ -215,6 +376,11 @@ class Configen::Generator
     else
       { content: File.read(path) }
     end
+  end
+
+  def add_seed_error(rel, message)
+    @errors[rel] ||= []
+    @errors[rel] << message
   end
 
   def render_erb(path, variables)
@@ -263,7 +429,7 @@ class Configen::Generator
   end
 
   def write_files!
-    (@last_plan[:create] | @last_plan[:update]).each do |rel|
+    (@last_plan[:create] | @last_plan[:update] | @last_plan[:adopt]).each do |rel|
       dst = @home_path.join(rel)
 
       if File.symlink?(dst)
@@ -275,7 +441,28 @@ class Configen::Generator
       end
 
       FileUtils.mkdir_p(dst.dirname)
-      File.write(dst, @last_plan[:desired][rel])
+      desired = @last_plan[:desired].fetch(rel)
+      atomic_write(dst, desired.content, desired.mode)
+    end
+  end
+
+  def write_seed_files!
+    @last_seed_plan[:seed].each do |rel|
+      dst = @home_path.join(rel)
+      next if File.exist?(dst) || File.symlink?(dst)
+
+      FileUtils.mkdir_p(dst.dirname)
+      desired = @last_seed_plan[:desired].fetch(rel)
+      atomic_write(dst, desired.content, desired.mode)
+    end
+  end
+
+  def copy_pulled_files!
+    @last_pull_plan[:pull].each do |rel|
+      spec = @last_pull_plan.fetch(:seeds).fetch(rel)
+      dst = @home_path.join(rel)
+      FileUtils.mkdir_p(spec.source.dirname)
+      File.write(spec.source, File.read(dst))
     end
   end
 
@@ -332,8 +519,8 @@ class Configen::Generator
     return if @manifest_path.nil?
     return unless @errors.empty?
 
-    files = @last_plan[:desired].transform_values do |content|
-      { "sha256" => Digest::SHA256.hexdigest(content) }
+    files = @last_plan[:desired].transform_values do |file|
+      { "sha256" => Digest::SHA256.hexdigest(file.content) }
     end
 
     data = {
@@ -343,5 +530,38 @@ class Configen::Generator
 
     FileUtils.mkdir_p(@manifest_path.dirname)
     File.write(@manifest_path, YAML.dump(data))
+  end
+
+  def desired_mode(source, explicit_mode)
+    return explicit_mode unless explicit_mode.nil?
+
+    executable?(source) ? 0o755 : 0o644
+  end
+
+  def executable?(path)
+    path.stat.executable?
+  rescue Errno::ENOENT
+    false
+  end
+
+  def file_mode_matches?(path, mode)
+    (path.stat.mode & 0o7777) == mode
+  end
+
+  def atomic_write(path, content, mode)
+    tmp_path = nil
+    Tempfile.create([".configen-", ".tmp"], path.dirname.to_s) do |tmp|
+      tmp_path = tmp.path
+      tmp.binmode
+      tmp.write(content)
+      tmp.flush
+      tmp.fsync
+      File.chmod(mode, tmp.path)
+      tmp.close
+      File.rename(tmp_path, path)
+      tmp_path = nil
+    end
+  ensure
+    FileUtils.rm_f(tmp_path) if tmp_path && File.exist?(tmp_path)
   end
 end

@@ -8,10 +8,11 @@ class Configen::Command
     @generator = Configen::Generator.new(home_path: @home_path, manifest_path:)
     @hook_runner = Configen::HookRunner.new
     @templates = config.templates
+    @seeds = config.seeds
     @errors = {}
   end
 
-  attr_reader :templates, :errors
+  attr_reader :templates, :seeds, :errors
 
   def get_variable(path = nil, theme: nil)
     return @config.variable_values(theme:) if path.nil?
@@ -27,51 +28,68 @@ class Configen::Command
     @config.delete_variable_override!(path)
   end
 
-  def diff(force: false, theme: nil)
-    @errors = {}
-    vars = resolve_variables_for(theme)
-    return [] if vars.nil?
+  def diff(force: false, theme: nil, patch: false)
+    plan, seed_plan = prepare(theme:, force:)
+    return [] if plan.nil?
 
-    plan = @generator.plan(@templates, vars, force:)
-    add_template_errors(@generator.errors)
-    return [] unless @errors.empty?
-
-    changed_paths = (plan[:create] + plan[:update] + plan[:delete]).uniq
+    changed_paths = changed_paths_for(plan)
     before_hooks = @hook_runner.planned_hooks(phase: "before", hooks: @config.hooks[:before], changed_paths:)
     after_hooks = @hook_runner.planned_hooks(phase: "after", hooks: @config.hooks[:after], changed_paths:)
-    format_plan(plan, before_hooks:, after_hooks:)
+    format_plan(plan, seed_plan:, before_hooks:, after_hooks:, patch:)
   rescue StandardError => e
     add_general_error(e.message)
     []
   end
 
   def apply(dry_run: false, force: false, theme: nil)
-    @errors = {}
-    vars = resolve_variables_for(theme)
-    return false if vars.nil?
+    plan, = prepare(theme:, force:)
+    return false if plan.nil?
 
-    plan = @generator.plan(@templates, vars, force:)
-    add_template_errors(@generator.errors)
+    add_adopt_errors(plan) unless force
     return false unless @errors.empty?
     return true if dry_run
 
-    changed_paths = (plan[:create] + plan[:update] + plan[:delete]).uniq
+    changed_paths = changed_paths_for(plan)
 
     before_result = @hook_runner.run(phase: "before", hooks: @config.hooks[:before], changed_paths:)
 
     applied = @generator.apply_from_plan(dry_run: false)
+    add_template_errors(@generator.errors)
+
+    seeds_applied = applied && @generator.apply_seeds_from_plan(dry_run: false)
+    add_seed_errors(@generator.errors) if applied && !seeds_applied
+
     after_result = if applied
                      @hook_runner.run(phase: "after", hooks: @config.hooks[:after], changed_paths:)
                    else
                      { errors: [] }
                    end
 
-    add_template_errors(@generator.errors)
     add_hook_errors(before_result[:errors], after_result[:errors])
-    applied && @errors.empty?
+    applied && seeds_applied && @errors.empty?
   rescue StandardError => e
     add_general_error(e.message)
     false
+  end
+
+  def pull(dry_run: false)
+    @errors = {}
+    seed_validation_errors = @config.validate_seeds
+    add_seed_errors(seed_validation_errors)
+    return [] unless @errors.empty?
+
+    plan = @generator.plan_pull(@seeds)
+    add_seed_errors(@generator.errors)
+    return [] unless @errors.empty?
+
+    pulled = @generator.pull_from_plan(dry_run:)
+    add_seed_errors(@generator.errors)
+    return [] unless pulled && @errors.empty?
+
+    format_pull_plan(plan)
+  rescue StandardError => e
+    add_general_error(e.message)
+    []
   end
 
   def validate
@@ -82,6 +100,9 @@ class Configen::Command
 
     variable_errors = @config.validate_variable_overrides
     @errors["variables"] = variable_errors unless variable_errors.empty?
+
+    seed_errors = @config.validate_seeds
+    @errors["seeds"] = seed_errors unless seed_errors.empty?
 
     theme_errors = validate_themes_scope
     @errors["themes"] = theme_errors unless theme_errors.empty?
@@ -103,6 +124,41 @@ class Configen::Command
   end
 
   private
+
+  # Renders and plans everything `diff` and `apply` need, collecting errors from
+  # every stage. Returns nil instead of a plan when anything failed, so callers
+  # only have to check for that.
+  def prepare(theme:, force:)
+    @errors = {}
+    vars = resolve_variables_for(theme)
+    return nil if vars.nil?
+
+    plan = @generator.plan(@templates, vars, force:)
+    add_template_errors(@generator.errors)
+
+    seed_plan = empty_seed_plan
+    seed_validation_errors = @config.validate_seeds
+    if seed_validation_errors.empty?
+      seed_plan = @generator.plan_seeds(@seeds)
+      add_seed_errors(@generator.errors)
+    else
+      add_seed_errors(seed_validation_errors)
+    end
+
+    @errors.empty? ? [plan, seed_plan] : nil
+  end
+
+  def changed_paths_for(plan)
+    (plan[:create] + plan[:update] + plan[:adopt] + plan[:delete]).uniq
+  end
+
+  def add_adopt_errors(plan)
+    return if plan[:adopt].empty?
+
+    messages = plan[:adopt].map { |path| "#{path}: exists and was not created by configen" }
+    messages << "Run `configen apply --force` to take ownership of these files (their content will be replaced)."
+    @errors["adopt"] = messages
+  end
 
   def resolve_variables_for(theme)
     theme_name = @config.current_theme(theme)
@@ -128,6 +184,15 @@ class Configen::Command
     @errors["templates"] ||= []
     @errors["templates"].concat(messages)
     @errors["templates"].uniq!
+  end
+
+  def add_seed_errors(generator_errors)
+    messages = generator_errors.is_a?(Hash) ? flatten_generator_errors(generator_errors) : Array(generator_errors)
+    return if messages.empty?
+
+    @errors["seeds"] ||= []
+    @errors["seeds"].concat(messages)
+    @errors["seeds"].uniq!
   end
 
   def add_hook_errors(*hook_errors)
@@ -163,14 +228,59 @@ class Configen::Command
     @errors["variables"].uniq!
   end
 
-  def format_plan(plan, before_hooks:, after_hooks:)
+  def format_plan(plan, seed_plan:, before_hooks:, after_hooks:, patch: false)
     lines = []
     lines.concat(plan[:create].map { |path| "CREATE   #{path}" })
-    lines.concat(plan[:update].map { |path| "UPDATE   #{path}" })
+    lines.concat(plan[:update].map { |path| "UPDATE   #{path}#{mode_note(plan, path)}" })
+    lines.concat(plan[:adopt].map { |path| "ADOPT    #{path}#{mode_note(plan, path)}" })
     lines.concat(plan[:delete].map { |path| "DELETE   #{path}" })
+    lines.concat(seed_plan[:seed].map { |path| "SEED     #{path}" })
     lines.concat(plan[:conflict].map { |path| "CONFLICT #{path}" })
+    lines.concat(seed_plan[:conflict].map { |path| "CONFLICT #{path}" })
     lines.concat(before_hooks.map { |hook| "HOOK BEFORE #{hook.description}: #{hook.run}" })
     lines.concat(after_hooks.map { |hook| "HOOK AFTER  #{hook.description}: #{hook.run}" })
+    lines << "NO CHANGES" if lines.empty?
+    lines.concat(patch_lines(plan, seed_plan)) if patch
+    lines
+  end
+
+  def mode_note(plan, path)
+    change = plan[:modes][path]
+    return "" if change.nil?
+
+    format(" (mode %<from>o -> %<to>o)", from: change.first, to: change.last)
+  end
+
+  def patch_lines(plan, seed_plan)
+    written = (plan[:create] + plan[:update] + plan[:adopt]).sort.map do |path|
+      patch_for(path, current_content(path), plan[:desired].fetch(path).content)
+    end
+    deleted = plan[:delete].map { |path| patch_for(path, current_content(path), "") }
+    seeded = seed_plan[:seed].map { |path| patch_for(path, "", seed_plan[:desired].fetch(path).content) }
+
+    body = (written + deleted + seeded).compact
+    body.empty? ? [] : [""] + body.flat_map(&:lines).map(&:chomp)
+  end
+
+  def patch_for(path, old_content, new_content)
+    old_label = old_content.empty? ? File::NULL : "a/#{path}"
+    new_label = new_content.empty? ? File::NULL : "b/#{path}"
+    diff = Configen::Diff.unified(old_content, new_content, old_label:, new_label:)
+    diff.empty? ? nil : diff
+  end
+
+  def current_content(path)
+    target = @home_path.join(path)
+    return "" unless target.file?
+
+    target.read
+  end
+
+  def format_pull_plan(plan)
+    lines = plan[:pull].map do |path|
+      spec = @seeds.fetch(path)
+      "PULL     #{path} -> #{spec.source_display}"
+    end
     lines << "NO CHANGES" if lines.empty?
     lines
   end
@@ -210,5 +320,14 @@ class Configen::Command
                 end
       end
     end
+  end
+
+  def empty_seed_plan
+    {
+      seed: [],
+      conflict: [],
+      unchanged: [],
+      desired: {}
+    }
   end
 end

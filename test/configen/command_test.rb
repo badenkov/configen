@@ -47,6 +47,183 @@ class Configen::CommandTest < Minitest::Test
     end
   end
 
+  def test_diff_and_apply_seed_only_when_target_missing
+    @project.join("configs", "qbittorrent.conf").write("repo seed\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/qbittorrent/qBittorrent.conf": "configs/qbittorrent.conf"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert_includes command.diff, "SEED     .config/qbittorrent/qBittorrent.conf"
+
+      assert command.apply
+      assert_equal "repo seed\n", @home.join(".config/qbittorrent/qBittorrent.conf").read
+
+      @home.join(".config/qbittorrent/qBittorrent.conf").write("app changed\n")
+      assert_equal ["NO CHANGES"], command.diff
+      assert command.apply
+      assert_equal "app changed\n", @home.join(".config/qbittorrent/qBittorrent.conf").read
+    end
+  end
+
+  def test_seed_paths_do_not_match_hook_changed_globs
+    @project.join("configs", "app.conf").write("repo seed\n")
+    log_path = @root.join("seed-hook.log")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/app/app.conf": "configs/app.conf"
+      variables: {}
+      hooks:
+        after:
+          - description: "seed-hook"
+            run: "echo ran >> #{log_path}"
+            changed: ".config/app/**"
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert command.apply
+      refute log_path.exist?
+    end
+  end
+
+  def test_pull_copies_changed_seed_target_back_to_repo
+    source = @project.join("configs", "app.conf")
+    source.write("repo\n")
+    @home.join(".config", "app").mkpath
+    @home.join(".config", "app", "app.conf").write("home\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates: {}
+      seeds:
+        ".config/app/app.conf": "configs/app.conf"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      lines = command.pull(dry_run: true)
+      assert_includes lines, "PULL     .config/app/app.conf -> configs/app.conf"
+      assert_equal "repo\n", source.read
+
+      lines = command.pull
+      assert_includes lines, "PULL     .config/app/app.conf -> configs/app.conf"
+      assert_equal "home\n", source.read
+    end
+  end
+
+  def test_diff_patch_shows_unified_content_diff
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert command.apply
+
+      @home.join(".config/kitty/kitty.conf").write("font_size 99\n")
+      lines = command.diff(patch: true)
+
+      assert_includes lines, "UPDATE   .config/kitty/kitty.conf"
+      assert_includes lines, "+++ b/.config/kitty/kitty.conf"
+      assert_includes lines, "-font_size 99"
+      assert_includes lines, "+font_size 12"
+
+      refute_includes command.diff, "-font_size 99"
+    end
+  end
+
+  def test_diff_annotates_mode_drift
+    source = @project.join("configs", "config.erb")
+    source.write("Host *\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".ssh/config":
+          source: "configs/config.erb"
+          mode: "600"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert command.apply
+      File.chmod(0o644, @home.join(".ssh/config"))
+
+      assert_includes command.diff, "UPDATE   .ssh/config (mode 644 -> 600)"
+    end
+  end
+
+  def test_apply_refuses_unmanaged_target_until_forced
+    @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
+      variables:
+        size: 12
+    YAML
+    @home.join(".config", "kitty").mkpath
+    @home.join(".config", "kitty", "kitty.conf").write("handwritten\n")
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert_includes command.diff, "ADOPT    .config/kitty/kitty.conf"
+
+      refute command.apply
+      assert command.errors.key?("adopt")
+      assert_equal "handwritten\n", @home.join(".config/kitty/kitty.conf").read
+
+      assert command.apply(force: true)
+      assert_equal "font_size 12\n", @home.join(".config/kitty/kitty.conf").read
+
+      # Now managed: a plain apply keeps it up to date.
+      @home.join(".config/kitty/kitty.conf").write("drift\n")
+      assert command.apply
+      assert_equal "font_size 12\n", @home.join(".config/kitty/kitty.conf").read
+    end
+  end
+
+  def test_diff_reports_seed_validation_errors
+    @project.join("configs", "nvim").mkpath
+    @project.join("configs", "nvim", "init.lua").write("vim.o.number = true\n")
+    @project.join("configs", "seed.lua").write("seed\n")
+    @project.join("configen.yaml").write(<<~YAML)
+      templates:
+        ".config/nvim": "configs/nvim"
+      seeds:
+        ".config/nvim/lua/app.lua": "configs/seed.lua"
+      variables: {}
+    YAML
+
+    cfg = Configen::Config.new(env: @env, home: @home, config: @project.join("configen.yaml").to_s)
+
+    with_home do
+      command = Configen::Command.new(cfg)
+      assert_empty command.diff
+      assert command.errors.key?("seeds")
+      assert_includes command.errors["seeds"], ".config/nvim/lua/app.lua: seed target collides with template target"
+    end
+  end
+
   def test_theme_overrides_variables_in_render
     @project.join("configs", "kitty.conf.erb").write("font_size <%= size %>\n")
     @project.join("themes", "screencast").mkpath
@@ -347,16 +524,15 @@ class Configen::CommandTest < Minitest::Test
     assert_includes command.errors["variables"], "Unknown override `unknown` (not found in base `variables`)"
   end
 
-  def test_validate_reports_system_variable_override_from_state
+  def test_validate_accepts_override_for_variable_named_system
     @project.join("configs", "kitty.conf.erb").write("font_size <%= font_size %>\n")
     @project.join("configen.yaml").write(<<~YAML)
       templates:
         ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
       variables:
         theme:
-          default:
-            palette:
-              bg: "#000000"
+          palette:
+            bg: "#000000"
           system: true
         font_size: 12
     YAML
@@ -371,9 +547,8 @@ class Configen::CommandTest < Minitest::Test
     YAML
 
     command = Configen::Command.new(cfg)
-    refute command.validate
-    assert command.errors.key?("variables")
-    assert_includes command.errors["variables"], "System variable `theme` cannot be overridden"
+    assert command.validate
+    assert_equal "#111111", cfg.variable_value("theme.palette.bg")
   end
 
   def test_validate_reports_type_mismatch_for_variable_override_from_state

@@ -3,21 +3,19 @@
 class Configen::Config
   DEFAULTS = {
     templates: {},
+    seeds: {},
     variables: {},
-    variable_definitions: {},
     themes_dir: "themes",
     theme: nil,
     hooks: {
       before: [],
       after: []
-    },
-    state_path: lambda { |env, home|
-      Pathname.new(env["XDG_STATE_HOME"] || File.join(home, ".local", "state")).join("configen").to_s
     }
   }.freeze
   SYSTEM_CONFIG_ROOT = "/etc/configen"
 
-  TemplateSpec = Struct.new(:source, keyword_init: true)
+  TemplateSpec = Struct.new(:source, :mode, :ignore, keyword_init: true)
+  SeedSpec = Struct.new(:source, :source_display, keyword_init: true)
   HookSpec = Struct.new(:description, :run, :changed, :if_command, keyword_init: true)
 
   attr_reader :settings, :config_path
@@ -33,6 +31,10 @@ class Configen::Config
 
   def templates
     @settings.templates
+  end
+
+  def seeds
+    @settings.seeds
   end
 
   def hooks
@@ -55,16 +57,14 @@ class Configen::Config
 
   def set_variable_override!(path, raw_value)
     keys = parse_variable_path(path)
-    validate_variable_path_mutable!(keys)
-    validate_variable_path_exists!(keys)
+    expected = validate_variable_path_exists!(keys)
     overrides = load_variable_overrides
-    assign_nested_value!(overrides, keys, normalize_override_value(raw_value))
+    assign_nested_value!(overrides, keys, coerce_override_value(raw_value, expected, path: keys.join(".")))
     save_variable_overrides(overrides)
   end
 
   def delete_variable_override!(path)
     keys = parse_variable_path(path)
-    validate_variable_path_mutable!(keys)
     validate_variable_path_exists!(keys)
     overrides = load_variable_overrides
     removed = delete_nested_key!(overrides, keys)
@@ -73,8 +73,10 @@ class Configen::Config
     save_variable_overrides(overrides)
   end
 
+  # State lives outside the repository: it is per-machine, not per-config.
   def state_path
-    @settings.state_path.to_s
+    @state_path ||= Pathname.new(@env["XDG_STATE_HOME"] || File.join(@home, ".local", "state"))
+                            .join("configen").to_s
   end
 
   def current_theme(override = nil)
@@ -105,18 +107,25 @@ class Configen::Config
   def validate_theme_overrides(theme_name)
     name = normalize_theme_name(theme_name)
     theme_vars = load_theme_variables(name)
-    collect_override_validation_errors(@settings.variables || {}, theme_vars, enforce_system: false)
+    collect_override_validation_errors(@settings.variables || {}, theme_vars)
   end
 
   def validate_variable_overrides
-    collect_override_validation_errors(@settings.variables || {}, load_variable_overrides, enforce_system: true)
+    collect_override_validation_errors(@settings.variables || {}, load_variable_overrides)
   end
 
-  def variable_paths(mode: :get)
-    paths = collect_variable_paths(@settings.variables || {})
-    return paths unless %i[set del].include?(mode.to_sym)
+  def validate_seeds
+    errors = []
+    @settings.seeds.each do |target, spec|
+      errors << "#{target}: source file not found: #{spec.source}" unless spec.source.file?
+      errors << "#{target}: seed source must not be an ERB template: #{spec.source}" if spec.source.extname == ".erb"
+      errors << "#{target}: seed target collides with template target" if seed_template_collision?(target)
+    end
+    errors
+  end
 
-    paths.reject { |path| system_variable?(path.split(".").first) }
+  def variable_paths
+    collect_variable_paths(@settings.variables || {})
   end
 
   private
@@ -127,15 +136,7 @@ class Configen::Config
   end
 
   def defaults
-    DEFAULTS.transform_values do |v|
-      if v.is_a?(Proc)
-        v.call(@env, @home)
-      elsif v.is_a?(Hash)
-        Marshal.load(Marshal.dump(v))
-      else
-        v
-      end
-    end
+    deep_copy(DEFAULTS)
   end
 
   def load_from_file
@@ -150,24 +151,32 @@ class Configen::Config
   end
 
   def normalize_values(data, base_dir:)
-    templates = (data["templates"] || {}).each_with_object({}) do |(target, raw_spec), result|
+    raw_templates = data["templates"] || {}
+    raise "`templates` must be a mapping" unless raw_templates.is_a?(Hash)
+
+    templates = raw_templates.each_with_object({}) do |(target, raw_spec), result|
       spec = normalize_template_spec(raw_spec)
       source_path = Pathname.new(base_dir).join(spec.fetch("source")).expand_path
-      result[target.to_s] = TemplateSpec.new(source: source_path)
+      result[target.to_s] = TemplateSpec.new(source: source_path, mode: spec["mode"], ignore: spec["ignore"])
+    end
+    raw_seeds = data["seeds"] || {}
+    raise "`seeds` must be a mapping" unless raw_seeds.is_a?(Hash)
+
+    seeds = raw_seeds.each_with_object({}) do |(target, raw_source), result|
+      source = normalize_seed_source(raw_source)
+      source_path = Pathname.new(base_dir).join(source).expand_path
+      result[target.to_s] = SeedSpec.new(source: source_path, source_display: source)
     end
     raw_variables = data["variables"] || {}
     raise "`variables` must be a mapping" unless raw_variables.is_a?(Hash)
-
-    variable_definitions = normalize_variable_definitions(raw_variables)
-    base_variables = variable_definitions.transform_values { |definition| deep_copy(definition[:default]) }
 
     themes_dir = data["themes_dir"] || DEFAULTS[:themes_dir]
     raise "`themes_dir` must be a string" unless themes_dir.is_a?(String)
 
     {
       templates: templates,
-      variables: base_variables,
-      variable_definitions: variable_definitions,
+      seeds: seeds,
+      variables: deep_copy(raw_variables),
       hooks: normalize_hooks(data["hooks"] || {}),
       themes_dir: themes_dir,
       theme: data["theme"]
@@ -177,7 +186,7 @@ class Configen::Config
   def normalize_template_spec(raw_spec)
     case raw_spec
     when String
-      { "source" => raw_spec }
+      { "source" => raw_spec, "mode" => nil, "ignore" => [] }
     when Hash
       source = raw_spec["source"] || raw_spec[:source]
       raise "Template spec must include `source`" if source.nil?
@@ -185,9 +194,59 @@ class Configen::Config
         raise "Template spec does not support `exact`; directory mappings are always exact"
       end
 
-      { "source" => source.to_s }
+      {
+        "source" => source.to_s,
+        "mode" => normalize_mode(raw_spec["mode"] || raw_spec[:mode]),
+        "ignore" => normalize_ignore_patterns(raw_spec["ignore"] || raw_spec[:ignore])
+      }
     else
       raise "Template spec must be a string or mapping, got #{raw_spec.class}"
+    end
+  end
+
+  def normalize_ignore_patterns(raw_ignore)
+    return [] if raw_ignore.nil?
+
+    patterns = raw_ignore.is_a?(Array) ? raw_ignore : [raw_ignore]
+    patterns.map do |raw_pattern|
+      unless raw_pattern.is_a?(String) && !raw_pattern.strip.empty?
+        raise "Template ignore must be a string or list of non-empty strings"
+      end
+
+      pattern = raw_pattern.strip.delete_prefix("./")
+      if Pathname.new(pattern).absolute? || pattern.split("/").include?("..")
+        raise "Template ignore pattern must be relative and must not include `..`: #{raw_pattern}"
+      end
+
+      pattern
+    end.uniq
+  end
+
+  def normalize_mode(raw_mode)
+    return nil if raw_mode.nil?
+    raise "Template mode must be an octal string" unless raw_mode.is_a?(String)
+
+    mode = raw_mode.strip
+    raise "Template mode must be an octal string" unless mode.match?(/\A[0-7]{3,4}\z/)
+
+    mode.to_i(8)
+  end
+
+  def normalize_seed_source(raw_source)
+    raise "Seed source must be a string path, got #{raw_source.class}" unless raw_source.is_a?(String)
+    raise "Seed source cannot be empty" if raw_source.strip.empty?
+    raise "Seed source must be a plain file, not an ERB template: #{raw_source}" if File.extname(raw_source) == ".erb"
+
+    raw_source
+  end
+
+  def seed_template_collision?(seed_target)
+    @settings.templates.any? do |template_target, spec|
+      next true if seed_target == template_target
+      next false unless spec.source.directory? && seed_target.start_with?("#{template_target}/")
+
+      relative = seed_target.delete_prefix("#{template_target}/")
+      !Configen::PathPatterns.match?(relative, spec.ignore || [])
     end
   end
 
@@ -246,7 +305,12 @@ class Configen::Config
   end
 
   def resolve_config_path(explicit_path)
-    return Pathname.new(explicit_path).expand_path if explicit_path
+    if explicit_path
+      path = Pathname.new(explicit_path).expand_path
+      raise "Config file not found: #{path}" unless path.file?
+
+      return path
+    end
 
     cwd_candidate = Pathname.new(Dir.pwd).join("configen.yaml")
     return cwd_candidate if cwd_candidate.file?
@@ -362,7 +426,7 @@ class Configen::Config
     merged
   end
 
-  def collect_override_validation_errors(base, override, path = nil, errors = [], enforce_system: true)
+  def collect_override_validation_errors(base, override, path = nil, errors = [])
     return errors unless override.is_a?(Hash)
 
     override.each do |raw_key, value|
@@ -374,19 +438,15 @@ class Configen::Config
         next
       end
 
-      if enforce_system && path.nil? && system_variable?(key)
-        errors << "System variable `#{key}` cannot be overridden"
-        next
-      end
-
       unless value_type_compatible?(base_value, value)
-        errors << "Type mismatch for `#{key_path}`: expected #{describe_type(base_value)}, got #{describe_type(value)}"
+        errors << "Type mismatch for `#{key_path}`: expected #{describe_expected_type(base_value)}, " \
+                  "got #{describe_type(value)}"
         next
       end
 
       next unless value.is_a?(Hash) && base_value.is_a?(Hash)
 
-      collect_override_validation_errors(base_value, value, key_path, errors, enforce_system:)
+      collect_override_validation_errors(base_value, value, key_path, errors)
     end
 
     errors
@@ -407,39 +467,6 @@ class Configen::Config
     base = @settings.variables || {}
     themed = deep_merge_hashes(base, load_theme_variables(resolve_active_theme(theme)))
     deep_merge_hashes(themed, load_variable_overrides)
-  end
-
-  def normalize_variable_definitions(raw_variables)
-    raw_variables.each_with_object({}) do |(raw_name, raw_definition), result|
-      name = raw_name.to_s
-      result[name] = normalize_variable_definition(name, raw_definition)
-    end
-  end
-
-  def normalize_variable_definition(name, raw_definition)
-    return { default: raw_definition, system: false } unless variable_definition_mapping?(raw_definition)
-
-    normalized = stringify_keys(raw_definition)
-    unknown_keys = normalized.keys - %w[default system]
-    raise "`variables.#{name}` definition supports only `default` and `system` keys" unless unknown_keys.empty?
-    unless normalized.key?("default")
-      raise "`variables.#{name}.default` is required when using variable definition mapping"
-    end
-
-    system = normalized.key?("system") ? normalized["system"] : false
-    raise "`variables.#{name}.system` must be boolean" unless [true, false].include?(system)
-
-    { default: normalized["default"], system: system }
-  end
-
-  def variable_definition_mapping?(value)
-    return false unless value.is_a?(Hash)
-
-    value.key?("default") || value.key?(:default) || value.key?("system") || value.key?(:system)
-  end
-
-  def stringify_keys(hash)
-    hash.transform_keys(&:to_s)
   end
 
   def parse_variable_path(path)
@@ -465,12 +492,6 @@ class Configen::Config
     fetch_nested_value!(@settings.variables || {}, keys)
   rescue StandardError
     raise "Unknown variable path `#{keys.join(".")}` in base `variables`"
-  end
-
-  def validate_variable_path_mutable!(keys)
-    return unless system_variable?(keys.first)
-
-    raise "Variable `#{keys.first}` is system and cannot be overridden"
   end
 
   def assign_nested_value!(hash, keys, value)
@@ -511,8 +532,41 @@ class Configen::Config
     File.write(variables_state_file, YAML.dump(overrides))
   end
 
-  def normalize_override_value(raw_value)
-    raw_value.to_s
+  def coerce_override_value(raw_value, expected, path:)
+    value = raw_value.to_s
+
+    case expected
+    when Hash
+      raise "Cannot set object variable `#{path}`; set one of its leaf values instead"
+    when Array
+      raise "Cannot set array variable `#{path}`"
+    when Numeric
+      parse_number(value, path:)
+    when true, false
+      parse_boolean(value, path:)
+    else
+      value
+    end
+  end
+
+  def parse_number(value, path:)
+    Integer(value, 10)
+  rescue ArgumentError
+    begin
+      number = Float(value)
+      raise ArgumentError unless number.finite?
+
+      number
+    rescue ArgumentError
+      raise "Invalid number for `#{path}`: #{value.inspect}"
+    end
+  end
+
+  def parse_boolean(value, path:)
+    return true if value == "true"
+    return false if value == "false"
+
+    raise "Invalid boolean for `#{path}`: expected `true` or `false`, got #{value.inspect}"
   end
 
   def delete_nested_key!(hash, keys)
@@ -544,14 +598,9 @@ class Configen::Config
     end
   end
 
-  def system_variable?(key)
-    definition = fetch_hash_key(@settings.variable_definitions || {}, key)
-    definition.is_a?(Hash) && definition[:system] == true
-  end
-
   def value_type_compatible?(expected, actual)
     if expected.nil?
-      actual.nil?
+      scalar_value?(actual)
     elsif expected.is_a?(Numeric)
       actual.is_a?(Numeric)
     elsif [true, false].include?(expected)
@@ -559,6 +608,10 @@ class Configen::Config
     else
       actual.is_a?(expected.class)
     end
+  end
+
+  def scalar_value?(value)
+    value.is_a?(String) || value.is_a?(Numeric) || [true, false].include?(value)
   end
 
   def describe_type(value)
@@ -575,6 +628,10 @@ class Configen::Config
     else
       value.class.name.downcase
     end
+  end
+
+  def describe_expected_type(value)
+    value.nil? ? "scalar" : describe_type(value)
   end
 
   def deep_copy(value)
