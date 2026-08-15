@@ -6,6 +6,7 @@ require "tempfile"
 
 class Configen::Generator
   DesiredFile = Struct.new(:content, :mode, keyword_init: true)
+  ManagedDirectory = Struct.new(:target, :ignore, keyword_init: true)
 
   attr_reader :errors, :last_plan, :last_seed_plan, :last_pull_plan
 
@@ -41,8 +42,8 @@ class Configen::Generator
   def plan(templates, variables = {}, force: false)
     @errors = {}
 
-    desired, managed_dir_roots = build_desired(templates, variables)
-    @last_plan = build_plan(desired, managed_dir_roots, force:)
+    desired, managed_directories = build_desired(templates, variables)
+    @last_plan = build_plan(desired, managed_directories, force:)
   end
 
   def apply(templates, variables = {}, dry_run: false, force: false)
@@ -107,24 +108,34 @@ class Configen::Generator
 
   def build_desired(templates, variables)
     desired = {}
-    managed_dir_roots = []
+    managed_directories = []
 
     templates.each do |target_rel, spec|
       source = spec.source
 
       if source.directory?
-        managed_dir_roots << target_rel
+        ignore = spec.ignore || []
+        managed_directories << ManagedDirectory.new(target: target_rel, ignore: ignore)
         source.glob("**/*", File::FNM_DOTMATCH).select(&:file?).each do |src|
           rel = src.relative_path_from(source).to_s
-          dst = File.join(target_rel, strip_template_ext(rel))
+          rendered_rel = strip_template_ext(rel)
+          next if Configen::PathPatterns.match?(rendered_rel, ignore)
+
+          dst = File.join(target_rel, rendered_rel)
           render_into_desired!(desired, dst, src.to_s, variables, mode: desired_mode(src, spec.mode))
         end
       else
+        unless (spec.ignore || []).empty?
+          @errors[target_rel] ||= []
+          @errors[target_rel] << "ignore is supported only for directory templates"
+          next
+        end
+
         render_into_desired!(desired, target_rel, source.to_s, variables, mode: desired_mode(source, spec.mode))
       end
     end
 
-    [desired, managed_dir_roots]
+    [desired, managed_directories]
   end
 
   def render_into_desired!(desired, target_rel, source_path, variables, mode:)
@@ -138,7 +149,7 @@ class Configen::Generator
     desired[target_rel] = DesiredFile.new(content: result[:content], mode: mode)
   end
 
-  def build_plan(desired, managed_dir_roots, force:)
+  def build_plan(desired, managed_directories, force:)
     plan = {
       desired: desired,
       create: [],
@@ -200,12 +211,15 @@ class Configen::Generator
       end
     end
 
-    managed_dir_roots.each do |root_rel|
-      root_abs = @home_path.join(root_rel)
+    managed_directories.each do |managed|
+      root_abs = @home_path.join(managed.target)
       next unless root_abs.directory?
 
       Find.find(root_abs.to_s) do |path|
         next if File.directory?(path)
+
+        managed_rel = Pathname.new(path).relative_path_from(root_abs).to_s
+        next if Configen::PathPatterns.match?(managed_rel, managed.ignore)
 
         rel = Pathname.new(path).relative_path_from(@home_path).to_s
         next if desired.key?(rel)
@@ -214,7 +228,7 @@ class Configen::Generator
       end
     end
 
-    collect_manifest_stale_entries(plan, desired)
+    collect_manifest_stale_entries(plan, desired, managed_directories)
 
     %i[create update delete conflict unchanged].each do |kind|
       plan[kind] = plan[kind].uniq.sort
@@ -313,12 +327,14 @@ class Configen::Generator
     plan
   end
 
-  def collect_manifest_stale_entries(plan, desired)
+  def collect_manifest_stale_entries(plan, desired, managed_directories)
     manifest = load_manifest
     return if manifest.empty?
 
     stale_paths = manifest.keys - desired.keys
     stale_paths.each do |rel|
+      next if ignored_managed_path?(rel, managed_directories)
+
       path = @home_path.join(rel)
       next unless path.file? || path.symlink?
 
@@ -330,6 +346,16 @@ class Configen::Generator
         @errors["conflicts"] ||= []
         @errors["conflicts"] << "#{rel}: stale generated file was modified; refusing to delete"
       end
+    end
+  end
+
+  def ignored_managed_path?(path, managed_directories)
+    managed_directories.any? do |managed|
+      prefix = "#{managed.target}/"
+      next false unless path.start_with?(prefix)
+
+      relative = path.delete_prefix(prefix)
+      Configen::PathPatterns.match?(relative, managed.ignore)
     end
   end
 

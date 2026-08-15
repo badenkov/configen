@@ -92,6 +92,85 @@ class Configen::GeneratorTest < Minitest::Test
     refute @home.join(".config/nvim/legacy.lua").exist?
   end
 
+  def test_directory_ignore_preserves_app_managed_files_and_subdirectories
+    source = @source.join("herdr")
+    source.join("plugins").mkpath
+    source.join("config.toml").write("managed = true\n")
+    source.join("plugins", "bundled.json").write("must not be rendered\n")
+
+    target = @home.join(".config", "herdr")
+    target.join("plugins").mkpath
+    target.join("config.toml").write("managed = false\n")
+    target.join("plugins", "runtime.json").write("runtime\n")
+    target.join("plugins.json").write("plugins\n")
+    target.join("herdr-client.log").write("client log\n")
+    target.join("herdr-server.log").write("server log\n")
+    target.join("stale.tmp").write("delete me\n")
+
+    templates = {
+      ".config/herdr" => Configen::Config::TemplateSpec.new(
+        source:,
+        ignore: ["plugins/", "plugins.json", "*.log"]
+      )
+    }
+
+    plan = @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+
+    assert_equal [".config/herdr/config.toml"], plan[:update]
+    assert_equal [".config/herdr/stale.tmp"], plan[:delete]
+
+    assert @generator.apply_from_plan
+    assert_equal "managed = true\n", target.join("config.toml").read
+    assert_equal "runtime\n", target.join("plugins", "runtime.json").read
+    assert_equal "plugins\n", target.join("plugins.json").read
+    assert_equal "client log\n", target.join("herdr-client.log").read
+    assert_equal "server log\n", target.join("herdr-server.log").read
+    refute target.join("plugins", "bundled.json").exist?
+    refute target.join("stale.tmp").exist?
+  end
+
+  def test_adding_ignore_releases_previously_managed_file_from_manifest
+    source = @source.join("herdr-manifest")
+    source.mkpath
+    source.join("config.toml").write("managed = true\n")
+    source.join("plugins.json").write("initial\n")
+    target = @home.join(".config", "herdr")
+
+    initial_templates = {
+      ".config/herdr" => Configen::Config::TemplateSpec.new(source:, ignore: [])
+    }
+    assert @generator.apply(initial_templates, Configen::StrictOpenStruct.new({}))
+
+    target.join("plugins.json").write("app changed\n")
+    source.join("plugins.json").delete
+    ignored_templates = {
+      ".config/herdr" => Configen::Config::TemplateSpec.new(source:, ignore: ["plugins.json"])
+    }
+
+    plan = @generator.plan(ignored_templates, Configen::StrictOpenStruct.new({}))
+    assert_empty plan[:delete]
+    assert_empty plan[:conflict]
+
+    assert @generator.apply_from_plan
+    assert_equal "app changed\n", target.join("plugins.json").read
+
+    manifest = YAML.safe_load_file(@manifest)
+    refute manifest.fetch("files").key?(".config/herdr/plugins.json")
+  end
+
+  def test_ignore_is_rejected_for_file_template
+    source = @source.join("herdr.toml")
+    source.write("managed = true\n")
+    templates = {
+      ".config/herdr/config.toml" => Configen::Config::TemplateSpec.new(source:, ignore: ["*.log"])
+    }
+
+    @generator.plan(templates, Configen::StrictOpenStruct.new({}))
+
+    assert_includes @generator.errors[".config/herdr/config.toml"],
+                    "ignore is supported only for directory templates"
+  end
+
   def test_conflict_when_target_is_directory_but_template_is_file
     @source.join("kitty").mkpath
     @source.join("kitty", "kitty.conf.erb").write("font_size 12\n")
@@ -201,13 +280,15 @@ class Configen::GeneratorTest < Minitest::Test
 
   def test_template_render_error_blocks_apply
     @source.join("broken").mkpath
-    @source.join("broken", "cfg.erb").write("x=<%= missing.value %>\n")
+    @source.join("broken", "cfg.erb").write("x=<%= fnot_size %>\n")
     templates = {
       ".config/broken/cfg" => Configen::Config::TemplateSpec.new(source: @source.join("broken", "cfg.erb"))
     }
 
-    refute @generator.apply(templates, Configen::StrictOpenStruct.new({}))
+    variables = Configen::StrictOpenStruct.new({ "font_size" => 12 })
+    refute @generator.apply(templates, variables)
     assert @generator.errors.key?(".config/broken/cfg")
+    assert_includes @generator.errors[".config/broken/cfg"].join("\n"), "Did you mean `font_size`?"
     refute @home.join(".config/broken/cfg").exist?
   end
 

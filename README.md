@@ -78,6 +78,12 @@ templates:
   ".config/kitty/kitty.conf": "configs/kitty/kitty.conf.erb"
   ".config/nvim":
     source: "configs/nvim"
+  ".config/herdr":
+    source: "configs/herdr"
+    ignore:
+      - "plugins/"
+      - "plugins.json"
+      - "*.log"
   ".ssh/config":
     source: "configs/ssh/config.erb"
     mode: "600"
@@ -88,12 +94,10 @@ seeds:
 variables:
   font_size: 13
   theme:
-    default:
-      palette:
-        bg: "#000000"
-        fg: "#ffffff"
-      wallpaper: "default.jpg"
-    system: true
+    palette:
+      bg: "#000000"
+      fg: "#ffffff"
+    wallpaper: "default.jpg"
 
 hooks:
   before:
@@ -121,17 +125,19 @@ Rules:
 - `.erb` files are rendered.
 - Other files are copied as-is.
 - Directory sources are synchronized exactly: extra files in target are removed.
+- Directory template mappings may define `ignore` as a pattern or list of patterns relative to the target root.
+- Ignored paths are not rendered from the source, updated, deleted by exact synchronization, or tracked in the manifest.
+- A pattern ending in `/` ignores the complete subtree, for example `plugins/`.
+- Globs use path-aware matching: `*.log` matches only at the target root, while `**/*.log` matches at any depth.
+- Adding an ignore pattern releases a previously generated file from the manifest without deleting or overwriting it.
+- Ignore applies only to that directory mapping; an explicit template or seed may still target a path inside an ignored subtree.
 - `seeds` key is target path relative to `$HOME`, and value is a plain source file relative to `configen.yaml`.
 - Seed sources cannot be `.erb` files.
 - `apply` writes a seed only when the target does not exist. Existing seed targets are never updated or reported as drift.
 - `diff` reports pending seed writes as `SEED` lines.
 - `pull` copies changed seed target content from `$HOME` back to the source file, so `git diff` shows app-owned config changes.
 - Theme is optional and overrides `variables`.
-- `variables` supports two forms:
-  - shorthand: `name: value` (equivalent to `default: value`, `system: false`);
-  - definition mapping:
-    - `default`: default value;
-    - `system` (optional, default `false`): blocks only ad-hoc `configen set/del` for that top-level variable.
+- `variables` is a plain mapping of variable names to their default values.
 - Active theme is resolved in order:
   - `--theme` option for current command;
   - saved state file `${XDG_STATE_HOME:-~/.local/state}/configen/theme`;
@@ -144,8 +150,17 @@ Rules:
 - Seeds are not stored in the manifest and are not pruned.
 - If a template target is removed/renamed, stale files from previous manifest are pruned automatically.
 - Stale file is deleted only when its current content hash matches the last rendered hash (manual edits are reported as conflict and preserved).
-- `configen set` always stores `VALUE` as a string (no YAML parsing of CLI value).
-- Override types are validated against the default variable value type inferred from YAML/Ruby values (`string`, `number`, `boolean`, `array`, `object`, `nil`).
+- The default value of each variable defines its recursive schema:
+  - strings, numbers, and booleans are typed scalar leaves;
+  - objects are closed: overrides may only use paths present in the default, and objects are deep-merged;
+  - arrays are opaque leaves and are replaced as a whole; `configen set` cannot modify arrays or their elements;
+  - `null` is an untyped leaf that accepts any scalar override.
+- `configen set` coerces `VALUE` using the default leaf type:
+  - numbers are parsed as integers or floating-point values;
+  - booleans accept only `true` or `false`;
+  - strings and untyped `null` leaves store the CLI value verbatim;
+  - object and array paths are rejected.
+- Theme and saved-state overrides are validated recursively against the same schema before diff or apply.
 - Theme file path: `<themes_dir>/<theme>/theme.yaml` (relative to `configen.yaml`).
 - Theme file may be either plain variables mapping or `{ variables: ... }`.
 - `configen validate` checks:

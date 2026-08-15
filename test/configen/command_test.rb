@@ -444,16 +444,15 @@ class Configen::CommandTest < Minitest::Test
     assert_includes command.errors["variables"], "Unknown override `unknown` (not found in base `variables`)"
   end
 
-  def test_validate_reports_system_variable_override_from_state
+  def test_validate_accepts_override_for_variable_named_system
     @project.join("configs", "kitty.conf.erb").write("font_size <%= font_size %>\n")
     @project.join("configen.yaml").write(<<~YAML)
       templates:
         ".config/kitty/kitty.conf": "configs/kitty.conf.erb"
       variables:
         theme:
-          default:
-            palette:
-              bg: "#000000"
+          palette:
+            bg: "#000000"
           system: true
         font_size: 12
     YAML
@@ -468,9 +467,8 @@ class Configen::CommandTest < Minitest::Test
     YAML
 
     command = Configen::Command.new(cfg)
-    refute command.validate
-    assert command.errors.key?("variables")
-    assert_includes command.errors["variables"], "System variable `theme` cannot be overridden"
+    assert command.validate
+    assert_equal "#111111", cfg.variable_value("theme.palette.bg")
   end
 
   def test_validate_reports_type_mismatch_for_variable_override_from_state

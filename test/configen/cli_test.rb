@@ -65,13 +65,13 @@ class Configen::CLITest < Minitest::Test
     with_home(chdir: @project) do
       cli = Configen::CLI.new([], {}, {})
       _out, _err = capture_io do
-        cli.set("validates.some_variable.sub_var1", "newvalue")
+        cli.set("validates.some_variable.sub_var1", "99")
       end
       out, _err = capture_io do
         cli.get("validates.some_variable.sub_var1")
       end
 
-      assert_includes out, "newvalue"
+      assert_equal "99\n", out
     end
   end
 
@@ -155,39 +155,42 @@ class Configen::CLITest < Minitest::Test
     end
   end
 
-  def test_set_rejects_system_variable
+  def test_set_does_not_reserve_system_variable
     @project.join("configen.yaml").write(<<~YAML)
       templates: {}
       variables:
         theme:
-          default:
-            palette:
-              bg: "#000000"
+          palette:
+            bg: "#000000"
           system: true
     YAML
 
     with_home(chdir: @project) do
       cli = Configen::CLI.new([], {}, {})
-      error = assert_raises(Thor::Error) { cli.set("theme.palette.bg", "#111111") }
-      assert_includes error.message, "Variable `theme` is system and cannot be overridden"
+      capture_io { cli.set("theme.palette.bg", "#111111") }
+      out, _err = capture_io { cli.get("theme.palette.bg") }
+
+      assert_equal "#111111\n", out
     end
   end
 
-  def test_del_rejects_system_variable
+  def test_del_does_not_reserve_system_variable
     @project.join("configen.yaml").write(<<~YAML)
       templates: {}
       variables:
         theme:
-          default:
-            palette:
-              bg: "#000000"
+          palette:
+            bg: "#000000"
           system: true
     YAML
 
     with_home(chdir: @project) do
       cli = Configen::CLI.new([], {}, {})
-      error = assert_raises(Thor::Error) { cli.del("theme.palette.bg") }
-      assert_includes error.message, "Variable `theme` is system and cannot be overridden"
+      capture_io { cli.set("theme.palette.bg", "#111111") }
+      capture_io { cli.del("theme.palette.bg") }
+      out, _err = capture_io { cli.get("theme.palette.bg") }
+
+      assert_equal "#000000\n", out
     end
   end
 
@@ -199,9 +202,8 @@ class Configen::CLITest < Minitest::Test
       variables:
         font_size: 12
         theme:
-          default:
-            palette:
-              bg: "#000000"
+          palette:
+            bg: "#000000"
           system: true
     YAML
 
@@ -213,7 +215,7 @@ class Configen::CLITest < Minitest::Test
       assert_includes out, "complete -F _configen_completion configen"
       assert_includes out, "bash zsh fish"
       assert_includes out, "help version diff apply pull validate get set del theme"
-      assert_includes out, "completion-data variables --mode get"
+      assert_includes out, "completion-data variables 2>/dev/null"
     end
   end
 
@@ -260,24 +262,21 @@ class Configen::CLITest < Minitest::Test
       variables:
         font_size: 12
         theme:
-          default:
-            palette:
-              bg: "#000000"
+          palette:
+            bg: "#000000"
           system: true
     YAML
 
     with_home(chdir: @project) do
       cli = Configen::CLI.new([], {}, {})
-      cli_set = Configen::CLI.new([], { "mode" => "set" }, {})
 
       themes_out, _err = capture_io { cli.completion_data("themes") }
-      vars_get_out, _err = capture_io { cli.completion_data("variables") }
-      vars_set_out, _err = capture_io { cli_set.completion_data("variables") }
+      vars_out, _err = capture_io { cli.completion_data("variables") }
 
       assert_includes themes_out, "tokyo-night"
-      assert_includes vars_get_out, "theme.palette.bg"
-      refute_includes vars_set_out, "theme.palette.bg"
-      assert_includes vars_set_out, "font_size"
+      assert_includes vars_out, "theme.palette.bg"
+      assert_includes vars_out, "theme.system"
+      assert_includes vars_out, "font_size"
     end
   end
 end

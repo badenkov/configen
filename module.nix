@@ -30,6 +30,7 @@
       wants = ["nix-daemon.socket"];
       after = ["nix-daemon.socket"];
       before = ["systemd-user-sessions.service"];
+      restartTriggers = [configDir];
       unitConfig.RequiresMountsFor = homeDirectory;
       serviceConfig = {
         Type = "oneshot";

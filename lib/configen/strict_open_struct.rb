@@ -1,3 +1,5 @@
+require "did_you_mean"
+
 class Configen::StrictOpenStruct
   def initialize(hash)
     @table = {}
@@ -7,9 +9,12 @@ class Configen::StrictOpenStruct
   end
 
   def method_missing(name, *_args)
-    raise NoMethodError, "Нет такого ключа: #{name}" unless @table.key?(name)
+    return @table[name] if @table.key?(name)
 
-    @table[name]
+    suggestions = DidYouMean::SpellChecker.new(dictionary: keys.map(&:to_s)).correct(name.to_s)
+    message = "Undefined variable `#{name}` in template."
+    message += " Did you mean `#{suggestions.first}`?" unless suggestions.empty?
+    raise NameError, message
   end
 
   def respond_to_missing?(name, include_private = false)
