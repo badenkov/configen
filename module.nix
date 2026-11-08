@@ -32,6 +32,8 @@
       after = ["nix-daemon.socket"];
       before = ["systemd-user-sessions.service"];
       restartTriggers = [configDir];
+      # Hooks run through sh and call the user's tools, as they would in a session.
+      path = ["/run/current-system/sw"];
       unitConfig.RequiresMountsFor = homeDirectory;
       serviceConfig = {
         Type = "oneshot";
