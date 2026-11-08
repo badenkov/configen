@@ -9,8 +9,9 @@
   enabledUsers = lib.filterAttrs (_: userCfg: userCfg.enable) cfg.users;
 
   mkUserConfig = name: userCfg: let
-    configPath = toString userCfg.configFile;
-    configDir = builtins.dirOf configPath;
+    # Interpolation copies a plain path into the store and keeps the string context, so the
+    # directory ends up in the system closure (toString would drop it).
+    configDir = "${userCfg.source}";
     userConfig = config.users.users.${name} or null;
     homeDirectory =
       if userConfig != null && userConfig ? home
@@ -67,9 +68,18 @@ in {
             description = "The configen package to use for this user";
           };
 
-          configFile = lib.mkOption {
-            type = lib.types.either lib.types.path lib.types.str;
-            description = "Path to this user's configen.yaml";
+          source = lib.mkOption {
+            type = lib.types.path;
+            example = lib.literalExpression ''
+              lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [./configen.yaml ./configs ./themes];
+              }
+            '';
+            description = ''
+              Directory with this user's configen.yaml and everything it references by relative
+              path, published as /etc/configen/users/<user>/current.
+            '';
           };
         };
       });

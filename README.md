@@ -264,11 +264,18 @@ Nix does orchestration only: install `configen`, publish the config directory at
 `/etc/configen/users/<user>/current`, and run `configen apply` as the user in a systemd activation
 service on every rebuild.
 
+`source` is the directory with `configen.yaml` and everything it references by relative path. Build
+it with `lib.fileset` so it holds only those files: a change elsewhere in the repository then
+neither changes the system nor reruns the activation service.
+
 ```nix
-{
+{lib, ...}: {
   configen = {
     enable = true;
-    users.badenkov.configFile = ./configen.yaml;
+    users.badenkov.source = lib.fileset.toSource {
+      root = ./.;
+      fileset = lib.fileset.unions [./configen.yaml ./configs ./themes];
+    };
   };
 }
 ```

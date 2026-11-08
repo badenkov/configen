@@ -45,7 +45,7 @@
     nixosModules.configen = {pkgs, ...}: {
       imports = [./module.nix];
 
-      config.configen.package = nixpkgs.lib.mkDefault self.packages.${pkgs.system}.configen;
+      config.configen.package = nixpkgs.lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.configen;
     };
   };
 }
